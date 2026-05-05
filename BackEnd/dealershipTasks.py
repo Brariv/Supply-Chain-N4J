@@ -90,7 +90,7 @@ def create_backorder(
     MATCH (m:Manufacturer {manufacturerId: $manufacturer_id})
     MATCH (d:Dealership {dealershipId: $dealership_id})
     OPTIONAL MATCH (c_existing:Car)
-    WITH m,
+    WITH m, d,
         coalesce(max(c_existing.carId), 0) + 1 AS next_id,
         ['Car', $body_type, $fuel_type] AS labels
     CREATE (c:$(labels))

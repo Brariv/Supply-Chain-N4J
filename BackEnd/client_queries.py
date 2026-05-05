@@ -274,7 +274,7 @@ def delete_customer_and_cars(driver, customer_id: int):
 def remove_car_from_customer(driver, customer_id: int, car_id: int):
     query = """
     MATCH (c:Customer {customerId: $customer_id})-[:OWNS]->(car:Car {carId: $car_id})
-    WITH car.carId AS carId
+    WITH car, car.carId AS carId
     DETACH DELETE car
     RETURN carId
     """
