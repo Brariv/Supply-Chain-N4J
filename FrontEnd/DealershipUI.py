@@ -9,15 +9,15 @@ from textual.containers import Vertical, Horizontal
 import time
 import subprocess
 
-from Revisar.dealershipTasks import (
+from BackEnd.dealershipTasks import (
     create_backorder, get_dealership_visits, get_showroom_avg_msrp,
     get_monthly_sales_report, set_discount_old_cars, adjust_showroom_msrp,
     adjust_showroom_msrp_by_brand, remove_discount_by_brand, set_tracking,
     get_cars_on_shipment, get_all_backorders, delete_showroom_car, toggle_test_drive,
     update_car_tracking,
 )
-from Revisar.dealershipAux import get_all_manufacturers, driver, get_dealership_discount
-from Revisar.buy_car import get_showroom_cars
+from BackEnd.dealershipAux import get_all_manufacturers, driver, get_dealership_discount
+from BackEnd.buy_car import get_showroom_cars
 
 brand_models = {
     "Toyota":  ["Corolla", "Camry", "RAV4", "Hilux"],

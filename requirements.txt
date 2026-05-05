@@ -1,0 +1,7 @@
+neo4j
+python-dotenv
+python-dateutil
+faker
+textual
+networkx
+matplotlib

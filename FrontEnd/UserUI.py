@@ -10,7 +10,7 @@ import random
 # Allow running this file directly with `python FrontEnd/Base.py`
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from Revisar.client_queries import (
+from BackEnd.client_queries import (
     driver,
     get_customer_cars,
     get_customer_profile,
@@ -26,8 +26,8 @@ from Revisar.client_queries import (
     create_visit,
     add_costumer_cars_csv
 )
-from Revisar.dealershipAux import get_all_dealerships
-from Revisar.buy_car import (
+from BackEnd.dealershipAux import get_all_dealerships
+from BackEnd.buy_car import (
     get_showroom_cars,
     get_msrp,
     create_transaction_from_offers,

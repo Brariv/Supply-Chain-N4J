@@ -10,7 +10,7 @@ from textual.containers import Vertical
 # Allow running this file directly with `python FrontEnd/Base.py`
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from Revisar.login import login, dealership_login, driver
+from BackEnd.login import login, dealership_login, driver
 from UserUI import MenuScreen as UserMenuScreen
 from DealershipUI import MenuScreen as DealerMenuScreen
 
