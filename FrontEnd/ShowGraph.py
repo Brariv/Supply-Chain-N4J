@@ -1,121 +1,154 @@
 """
-Neo4j Graph Visualizer — networkx + matplotlib
-Requirements: pip install neo4j networkx matplotlib
+Backorder Graph Visualizer — networkx + matplotlib
+Displays each Manufacturer at the hub, with its ON_BACKORDER Car nodes
+fanned out in a circle around it. Car nodes are colored by body type.
 """
 
+import os
+import math
 from neo4j import GraphDatabase
+from dotenv import load_dotenv
 import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-# ── Connection ────────────────────────────────────────────────────────────────
-URI      = "bolt://localhost:7687"
-USER     = "neo4j"
-PASSWORD = "secret"
+load_dotenv(override=True)
 
-# ── Query ─────────────────────────────────────────────────────────────────────
+URI      = os.getenv("URI")
+USER     = os.getenv("USER")
+PASSWORD = os.getenv("PASSWORD")
+DATABASE = os.getenv("DATABASE")
+
 QUERY = """
-MATCH (a)-[r]->(b)
-RETURN a, type(r) AS rel, r, b
-LIMIT 100
+MATCH (m:Manufacturer)-[:ON_BACKORDER]->(c:Car)
+WITH m, collect(c)[..25] AS cars
+UNWIND cars AS c
+RETURN m, c
 """
 
-# ── Color map by node label ───────────────────────────────────────────────────
-LABEL_COLORS = {
-    "Person": "#00e5a0",
-    "Movie":  "#5b8dee",
-    "Show":   "#f7c948",
-    "Genre":  "#f06292",
+MANUFACTURER_COLOR = "#e8c57a"
+CAR_COLORS = {
+    "Sedan":  "#5b9bd5",
+    "SUV":    "#70ad47",
+    "Pickup": "#ed7d31",
 }
-DEFAULT_COLOR = "#94a3b8"
-
-REL_COLOR     = "#475569"
-REL_FONT_COLOR = "#94a3b8"
-BACKGROUND    = "#0d0f14"
-NODE_FONT     = "white"
+DEFAULT_CAR_COLOR  = "#5bc8f5"
+BACKGROUND         = "#0d0f14"
+REL_COLOR          = "#475569"
+NODE_FONT          = "white"
 
 
-def get_label(node):
-    """Return the first label of a Neo4j node."""
-    labels = list(node.labels)
-    return labels[0] if labels else "Unknown"
-
-
-def get_caption(node):
-    """Return the best display name for a node."""
-    for key in ("name", "title", "id"):
-        if key in node:
-            return str(node[key])
-    return str(node.element_id)
+def _car_color(node):
+    for body in ("Sedan", "SUV", "Pickup"):
+        if body in node.labels:
+            return CAR_COLORS[body]
+    return DEFAULT_CAR_COLOR
 
 
 def build_graph(driver):
-    G = nx.DiGraph()
+    G         = nx.DiGraph()
+    mfr_nodes = set()
+    car_mfr   = {}   # car element_id → manufacturer element_id
 
-    with driver.session() as session:
-        results = session.run(QUERY)
-        for record in results:
-            a, rel_type, r, b = record["a"], record["rel"], record["r"], record["b"]
+    with driver.session(database=DATABASE) as session:
+        for record in session.run(QUERY):
+            m, c = record["m"], record["c"]  # r removed — not returned by query
+            m_id, c_id = m.element_id, c.element_id
 
-            # Nodes
-            a_id = a.element_id
-            b_id = b.element_id
+            if m_id not in G.nodes:
+                G.add_node(m_id,
+                           kind="manufacturer",
+                           caption=m.get("Brand", str(m.get("manufacturerId", "Mfr"))),
+                           color=MANUFACTURER_COLOR)
+                mfr_nodes.add(m_id)
 
-            if a_id not in G.nodes:
-                G.add_node(a_id,
-                           label=get_label(a),
-                           caption=get_caption(a),
-                           props=dict(a))
+            if c_id not in G.nodes:
+                caption = f"{c.get('Brand', '')}\n{c.get('Model', '')}".strip()
+                G.add_node(c_id,
+                           kind="car",
+                           caption=caption,
+                           color=_car_color(c))
+                car_mfr[c_id] = m_id
 
-            if b_id not in G.nodes:
-                G.add_node(b_id,
-                           label=get_label(b),
-                           caption=get_caption(b),
-                           props=dict(b))
+            G.add_edge(m_id, c_id, rel="ON_BACKORDER")
 
-            # Edge (allow multiple rels between same pair)
-            G.add_edge(a_id, b_id, rel=rel_type, props=dict(r))
-
-    return G
+    return G, mfr_nodes, car_mfr
 
 
-def draw_graph(G):
-    fig, ax = plt.subplots(figsize=(14, 9))
+def _radial_layout(mfr_nodes, car_mfr):
+    """Manufacturers on a horizontal axis; cars in a circle around each.
+    Spacing between clusters is computed dynamically so they never overlap."""
+    pos      = {}
+    mfr_list = list(mfr_nodes)
+
+    # Radius large enough that adjacent car nodes don't touch within a cluster
+    # arc_spacing ≈ 2π*r/n  ≥  min_gap  →  r ≥ n*min_gap / (2π)
+    MIN_ARC_GAP = 2.8
+    radii = {}
+    for m_id in mfr_list:
+        n = sum(1 for _, m in car_mfr.items() if m == m_id)
+        radii[m_id] = max(3.5, n * MIN_ARC_GAP / (2 * math.pi))
+
+    # Cumulative x-placement: separate cluster edges by GAP
+    GAP = 2.0
+    xs  = []
+    x   = 0.0
+    for i, m_id in enumerate(mfr_list):
+        if i > 0:
+            x += radii[mfr_list[i - 1]] + radii[m_id] + GAP
+        xs.append(x)
+
+    mid = xs[-1] / 2.0 if xs else 0.0
+
+    for i, m_id in enumerate(mfr_list):
+        mx = xs[i] - mid
+        pos[m_id] = (mx, 0.0)
+
+        cars   = [c for c, m in car_mfr.items() if m == m_id]
+        n_cars = len(cars)
+        r      = radii[m_id]
+
+        for j, c_id in enumerate(cars):
+            angle     = 2 * math.pi * j / max(n_cars, 1)
+            pos[c_id] = (mx + r * math.cos(angle),
+                         r * math.sin(angle))
+
+    return pos
+
+
+def draw_graph(G, mfr_nodes, car_mfr):
+    pos = _radial_layout(mfr_nodes, car_mfr)
+
+    # Size the figure to match the actual data span so clusters aren't squished
+    if pos:
+        all_x = [p[0] for p in pos.values()]
+        all_y = [p[1] for p in pos.values()]
+        fig_w = max(18, (max(all_x) - min(all_x)) * 0.85)
+        fig_h = max(10, (max(all_y) - min(all_y)) * 0.85)
+    else:
+        fig_w, fig_h = 18, 10
+
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     fig.patch.set_facecolor(BACKGROUND)
     ax.set_facecolor(BACKGROUND)
     ax.axis("off")
 
-    # Layout
-    pos = nx.spring_layout(G, seed=42, k=2.5)
+    node_colors = [G.nodes[n]["color"] for n in G.nodes]
+    node_sizes  = [4000 if G.nodes[n]["kind"] == "manufacturer" else 1600
+                   for n in G.nodes]
+    node_labels = {n: G.nodes[n]["caption"] for n in G.nodes}
 
-    # Node attributes
-    node_colors  = [LABEL_COLORS.get(G.nodes[n]["label"], DEFAULT_COLOR) for n in G.nodes]
-    node_labels  = {n: G.nodes[n]["caption"] for n in G.nodes}
-    node_sizes   = [1800 for _ in G.nodes]
-
-    # Draw edges
     nx.draw_networkx_edges(
         G, pos, ax=ax,
         edge_color=REL_COLOR,
         arrows=True,
         arrowstyle="-|>",
-        arrowsize=18,
-        width=1.5,
-        connectionstyle="arc3,rad=0.1",
-        min_source_margin=28,
-        min_target_margin=28,
+        arrowsize=14,
+        width=1.2,
+        min_source_margin=40,
+        min_target_margin=22,
     )
 
-    # Edge labels
-    edge_labels = {(u, v): d["rel"] for u, v, d in G.edges(data=True)}
-    nx.draw_networkx_edge_labels(
-        G, pos, edge_labels=edge_labels, ax=ax,
-        font_size=7,
-        font_color=REL_FONT_COLOR,
-        bbox=dict(boxstyle="round,pad=0.15", fc=BACKGROUND, ec="none", alpha=0.8),
-    )
-
-    # Draw nodes
     nx.draw_networkx_nodes(
         G, pos, ax=ax,
         node_color=node_colors,
@@ -123,40 +156,35 @@ def draw_graph(G):
         alpha=0.95,
     )
 
-    # Node labels
     nx.draw_networkx_labels(
         G, pos, labels=node_labels, ax=ax,
-        font_size=8,
+        font_size=7,
         font_color=NODE_FONT,
         font_weight="bold",
     )
 
-    # Legend
-    seen_labels = set(nx.get_node_attributes(G, "label").values())
-    legend_patches = [
-        mpatches.Patch(color=LABEL_COLORS.get(lbl, DEFAULT_COLOR), label=lbl)
-        for lbl in sorted(seen_labels)
+    legend = [
+        mpatches.Patch(color=MANUFACTURER_COLOR,   label="Manufacturer"),
+        mpatches.Patch(color=CAR_COLORS["Sedan"],  label="Sedan"),
+        mpatches.Patch(color=CAR_COLORS["SUV"],    label="SUV"),
+        mpatches.Patch(color=CAR_COLORS["Pickup"], label="Pickup"),
+        mpatches.Patch(color=DEFAULT_CAR_COLOR,    label="Car (other)"),
     ]
-    ax.legend(
-        handles=legend_patches,
-        loc="upper left",
-        facecolor="#1e2330",
-        edgecolor="#3a4460",
-        labelcolor="white",
-        fontsize=9,
-        framealpha=0.9,
-    )
+    ax.legend(handles=legend, loc="upper left",
+              facecolor="#1e2330", edgecolor="#3a4460",
+              labelcolor="white", fontsize=9, framealpha=0.9)
 
-    plt.title("Neo4j Graph", color="white", fontsize=13, pad=16)
+    total_cars = sum(1 for n in G.nodes if G.nodes[n]["kind"] == "car")
+    plt.title(f"Backorder by Manufacturer  —  {total_cars} cars pending",
+              color="white", fontsize=13, pad=16)
     plt.tight_layout()
     plt.show()
 
 
-if __name__ == "__main__":
-    driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
-    try:
-        G = build_graph(driver)
-        print(f"Loaded {G.number_of_nodes()} nodes, {G.number_of_edges()} relationships.")
-        draw_graph(G)
-    finally:
-        driver.close()
+drv = GraphDatabase.driver(URI, auth=(USER, PASSWORD))  # type: ignore[arg-type]
+try:
+    G, mfr_nodes, car_mfr = build_graph(drv)
+    print(f"{G.number_of_nodes()} nodes · {G.number_of_edges()} backorder relationships")
+    draw_graph(G, mfr_nodes, car_mfr)
+finally:
+    drv.close()

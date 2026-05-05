@@ -24,6 +24,7 @@ from Revisar.client_queries import (
     remove_car_from_customer,
     remove_all_cars_from_customer,
     create_visit,
+    add_costumer_cars_csv
 )
 from Revisar.dealershipAux import get_all_dealerships
 from Revisar.buy_car import (
@@ -102,16 +103,37 @@ class ShowCarsScreen(Screen):
         yield Label("\nPress Escape to go back")
         yield Footer()
 
+# if self.cars_data:
+#                 for car in self.cars_data:
+#                     year = car.get('year', '?')
+#                     brand = car.get('brand', '?')
+#                     model = car.get('model', '?')
+#                     # If mileage is null/empty, show 0
+#                     mileage = car.get('mileage')
+#                     mileage_display = str(mileage) if mileage not in (None, "") else "0"
+#                     # If since is null/empty, don't show it
+#                     since = car.get('since')
+#                     since_display = f" {since}" if since not in (None, "") else ""
+#                     label = f"{year} {brand} {model} {mileage_display}{since_display} | Plate: {car.get('plate', 'N/A')}"
+#                     lv.mount(ListItem(Label(label)))
+#             else:
+#                 self.query_one("#status", Static).update("No cars found.")
     def on_mount(self) -> None:
         try:
             self.cars_data = get_customer_cars(driver, self.app.customer_id)
             lv = self.query_one("#cars_list", ListView)
             if self.cars_data:
                 for car in self.cars_data:
-                    label = (
-                        f"{car.get('year', '?')} {car.get('brand', '?')} {car.get('model', '?')}"
-                        f" | Plate: {car.get('plate', 'N/A')}"
-                    )
+                    year = car.get('year', '?')
+                    brand = car.get('brand', '?')
+                    model = car.get('model', '?')
+                    # If mileage is null/empty, show 0
+                    mileage = car.get('mileage')
+                    mileage_display = str(mileage) if mileage not in (None, "") else "0"
+                    # If since is null/empty, don't show it
+                    since = car.get('since')
+                    since_display = f" | Since: {since}" if since not in (None, "") else ""
+                    label = f"Year: {year} | Brand: {brand} | Model: {model} | Plate: {car.get('plate', 'N/A')} | Mileage: {mileage_display} {since_display} "
                     lv.mount(ListItem(Label(label)))
             else:
                 self.query_one("#status", Static).update("No cars found.")
@@ -170,6 +192,10 @@ class RemoveCarScreen(Screen):
 # ---------------------------------------------------------------------------
 
 class ShowDealershipsScreen(Screen):
+    def __init__(self):
+        super().__init__()
+        self.dealerships = []
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield Label("Select a Dealership to Visit")
@@ -181,6 +207,7 @@ class ShowDealershipsScreen(Screen):
     def on_mount(self) -> None:
         try:
             dealerships = get_all_dealerships(driver)
+            self.dealerships = dealerships
             lv = self.query_one("#dealerships_list", ListView)
             if dealerships:
                 for d in dealerships:
@@ -192,8 +219,9 @@ class ShowDealershipsScreen(Screen):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         idx = event.list_view.index
-        if idx is not None:
-            self.app.push_screen(ShowRoomScreen(dealership_id=idx+1))  # Assuming dealership IDs start at 1
+        if idx is not None and 0 <= idx < len(self.dealerships):
+            dealership_id = self.dealerships[idx]["dealershipId"]
+            self.app.push_screen(ShowRoomScreen(dealership_id=dealership_id))
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -235,7 +263,7 @@ class ShowRoomScreen(Screen):
         idx = event.list_view.index
         if self.cars_data and idx is not None and 0 <= idx < len(self.cars_data):
             car = {**self.cars_data[idx], "dealership_id": self.dealership_id}
-            self.app.push_screen(NegotiationScreen(car))
+            self.app.push_screen(NegotiationScreen(car, self.dealership_id))
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -476,9 +504,24 @@ class AddCarsWithCSVScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Label("Add Cars With CSV")
-        yield Label("This feature is not implemented yet.")
+        yield Input(placeholder="Enter path to CSV file...", id="csv_path")
+        yield Button("Submit", id="submit", variant="primary")
+        yield Static("", id="result")
         yield Label("\nPress Escape to go back")
         yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        csv_path = self.query_one("#csv_path", Input).value.strip()
+        result = self.query_one("#result", Static)
+        if event.button.id == "submit":
+            if csv_path:
+                try:
+                    add_costumer_cars_csv(driver, self.app.customer_id, csv_path)
+                    result.update("✓ Cars added successfully!")
+                except Exception as e:
+                    result.update(f"✗ Error: {e}")
+            else:
+                result.update("Please enter a valid CSV file path.")
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -698,9 +741,10 @@ class InfoScreen(Screen):
 
 
 class NegotiationScreen(Screen):
-    def __init__(self, car_data: dict):
+    def __init__(self, car_data: dict, dealership_id: int):
         super().__init__()
         self.car_data = car_data
+        self.dealership_id = dealership_id
         self.car_id = car_data.get("car_id")
         self.msrp = float(car_data.get("msrp") or 0)
         # Replicate negotiate_price acceptance range: 0–15 % around MSRP
@@ -746,7 +790,7 @@ class NegotiationScreen(Screen):
 
             if offer >= self.min_price:
                 result.update(f"✓ Offer accepted: ${offer:,.2f}")
-                self.app.push_screen(TransactionScreen(self.car_data, self.offers))
+                self.app.push_screen(TransactionScreen(self.car_data, self.offers, self.dealership_id))
             else:
                 result.update(f"✗ Offer rejected: ${offer:,.2f}  (minimum ~${self.min_price:,.2f})")
         elif event.button.id == "clear":
@@ -759,10 +803,11 @@ class NegotiationScreen(Screen):
 
 
 class TransactionScreen(Screen):
-    def __init__(self, car_data: dict, offers: list):
+    def __init__(self, car_data: dict, offers: list, dealership_id: int = 1):
         super().__init__()
         self.car_data = car_data
         self.offers = offers
+        self.dealership_id = dealership_id
         self.agreed_price = offers[-1]
 
     def compose(self) -> ComposeResult:
@@ -785,7 +830,7 @@ class TransactionScreen(Screen):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         selected_payment = event.item.query_one(Label).render().plain
-        self.app.push_screen(PaymentScreen(selected_payment, self.car_data, self.offers))
+        self.app.push_screen(PaymentScreen(selected_payment, self.car_data, self.offers, self.dealership_id))
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -793,12 +838,13 @@ class TransactionScreen(Screen):
 
 
 class PaymentScreen(Screen):
-    def __init__(self, selected_payment: str, car_data: dict, offers: list):
+    def __init__(self, selected_payment: str, car_data: dict, offers: list, dealership_id: int = 1):
         super().__init__()
         self.selected_payment = selected_payment
         self.car_data = car_data
         self.offers = offers
         self.agreed_price = offers[-1]
+        self.dealership_id = dealership_id
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -864,10 +910,10 @@ class PaymentScreen(Screen):
                     customer_id=self.app.customer_id,
                     payment_type=self.selected_payment,
                     financing_months=financing_months,
+                    dealership_id=self.dealership_id
                 )
                 result.update("✓ Purchase complete! Transaction saved.")
-                dealership_id = self.car_data.get("dealership_id", 1)
-                self.app.push_screen(RateVisitScreen(dealership_id=dealership_id))
+                self.app.push_screen(RateVisitScreen(dealership_id=self.dealership_id))
             except Exception as e:
                 result.update(f"✗ Transaction failed: {e}")
 
@@ -889,14 +935,3 @@ class PaymentScreen(Screen):
 
 # ---------------------------------------------------------------------------
 
-class MyApp(App):
-    def __init__(self):
-        super().__init__()
-        self.customer_id: int = 0
-
-    # def on_mount(self) -> None:
-    #     if not self.customer_id:
-    #         self.push_screen(LoginScreen())
-
-
-# MyApp().run()

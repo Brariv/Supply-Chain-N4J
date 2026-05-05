@@ -2,7 +2,6 @@ from neo4j import GraphDatabase
 from dotenv import load_dotenv
 import os
 import csv
-from uuid import uuid4
 
 load_dotenv(override=True)
 
@@ -253,9 +252,11 @@ def delete_customer_and_cars(driver, customer_id: int):
     query = """
     MATCH (c:Customer {customerId: $customer_id})
     OPTIONAL MATCH (c)-[:OWNS]->(car:Car)
-    WITH c, collect(car) AS cars
-    DETACH DELETE c, cars
-    RETURN size(cars) AS deleted_cars
+    WITH c, count(car) AS deleted_cars, collect(car) AS cars
+    FOREACH (car IN cars | DETACH DELETE car)
+    WITH c, deleted_cars
+    DETACH DELETE c
+    RETURN deleted_cars
     """
 
     with driver.session(database=DATABASE) as session:
@@ -272,9 +273,10 @@ def delete_customer_and_cars(driver, customer_id: int):
 # Eliminar carro de cliente
 def remove_car_from_customer(driver, customer_id: int, car_id: int):
     query = """
-    MATCH (c:Customer {customerId: $customer_id})-[r:OWNS]->(car:Car {carId: $car_id})
-    DELETE r
-    RETURN car
+    MATCH (c:Customer {customerId: $customer_id})-[:OWNS]->(car:Car {carId: $car_id})
+    WITH car.carId AS carId
+    DETACH DELETE car
+    RETURN carId
     """
 
     with driver.session(database=DATABASE) as session:
@@ -285,27 +287,28 @@ def remove_car_from_customer(driver, customer_id: int, car_id: int):
         ).single()
 
         if not record:
-            raise ValueError("Relación Owns no encontrada")
+            raise ValueError("Carro no encontrado")
 
         return {
-            "status": "removed",
-            "car": record["car"]
+            "status": "deleted",
+            "car_id": record["carId"]
         }
 
 # Cliente borra todos sus carros
 def remove_all_cars_from_customer(driver, customer_id: int):
     query = """
-    MATCH (c:Customer {customerId: $customer_id})-[r:OWNS]->(:Car)
-    DELETE r
-    RETURN count(r) AS removed
+    MATCH (c:Customer {customerId: $customer_id})-[:OWNS]->(car:Car)
+    WITH count(car) AS deleted, collect(car) AS cars
+    FOREACH (car IN cars | DETACH DELETE car)
+    RETURN deleted
     """
 
     with driver.session(database=DATABASE) as session:
         record = session.run(query, customer_id=customer_id).single()
 
-        removed = record["removed"] if record else 0
+        deleted = record["deleted"] if record else 0
 
-        if removed == 0:
+        if deleted == 0:
             return {
                 "status": "no_changes",
                 "message": "El cliente no tenía carros"
@@ -313,7 +316,7 @@ def remove_all_cars_from_customer(driver, customer_id: int):
 
         return {
             "status": "success",
-            "relationships_removed": removed
+            "cars_deleted": deleted
         }
 
 def create_visit(driver, customer_id: int, dealership_id: int):
@@ -336,16 +339,35 @@ def create_visit(driver, customer_id: int, dealership_id: int):
         return record["r"]
     
 def add_costumer_cars_csv(driver, customer_id: int, csv_path: str):
+        # CSV format expected by add_costumer_cars_csv:
+        # Header: Model,Brand,Year,Plate,Since,Milage,Has_Crashed
+        # Field types:
+        #   Model: string
+        #   Brand: string
+        #   Year: integer (e.g. 2015)
+        #   Plate: string
+        #   Since: date string (e.g. 2016-05-20)
+        #   Milage: numeric (e.g. 75000)
+        #   Has_Crashed: boolean-like string (True or False)
+        # Example CSV:
+        # Model,Brand,Group,Type,Fuel_Type,Year,Plate,Since,Milage,Has_Crashed,Color
+        
+
     with open(csv_path, newline="", encoding="utf-8") as f:
         rows = [
             {
                 "Model":       row["Model"],
                 "Brand":       row["Brand"],
+                "Group":       row["Group"], 
+                "Type2":        row["Type"],
+                "Type3":        row["Fuel_Type"],
                 "Year":        int(row["Year"]),
                 "Plate":       row["Plate"],
                 "Since":       row["Since"],
                 "Milage":      row["Milage"],
                 "Has_Crashed": row["Has_Crashed"],
+                "Color":       row["Color"],
+
             }
             for row in csv.DictReader(f)
         ]
@@ -355,13 +377,20 @@ def add_costumer_cars_csv(driver, customer_id: int, csv_path: str):
 
     query = """
     MATCH (c:Customer {customerId: $customer_id})
-    UNWIND $rows AS row
+    OPTIONAL MATCH (existing:Car)
+    WITH c, coalesce(max(existing.carId), 0) AS last_id
+    UNWIND range(0, size($rows)-1) AS idx
+    WITH c, last_id, $rows[idx] AS row, last_id + idx + 1 AS carId
     CREATE (car:Car {
-        carId: $carId,
+        carId: carId,
         Model: row.Model,
         Brand: row.Brand,
         Year:  row.Year,
-        Plate: row.Plate
+        Plate: row.Plate,
+        Type2: row.Type2,
+        Type3: row.Type3,
+        Group: row.Group,
+        Color: row.Color
     })
     CREATE (c)-[:OWNS {
         Since:       row.Since,
@@ -372,7 +401,7 @@ def add_costumer_cars_csv(driver, customer_id: int, csv_path: str):
     """
 
     with driver.session(database=DATABASE) as session:
-        record = session.run(query, customer_id=customer_id, rows=rows, carId=uuid4().int).single()
+        record = session.run(query, customer_id=customer_id, rows=rows).single()
 
         if not record:
             raise ValueError("No se pudieron agregar los carros")

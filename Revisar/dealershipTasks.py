@@ -57,12 +57,13 @@ brand_models = {
 
 def create_backorder(
     driver,
-    manufacturer_id: str,
+    manufacturer_id: int,
     fuel_type: str,           # Electric | Diesel | Gas
     model: str,
     brand: str,
     color: str,
     destination_country: str,
+    dealership_id: int,
 ):
     """
     Crea un nodo Car con labels dinámicos (Car + body_type + fuel_type)
@@ -87,6 +88,7 @@ def create_backorder(
 
     query = """
     MATCH (m:Manufacturer {manufacturerId: $manufacturer_id})
+    MATCH (d:Dealership {dealershipId: $dealership_id})
     OPTIONAL MATCH (c_existing:Car)
     WITH m,
         coalesce(max(c_existing.carId), 0) + 1 AS next_id,
@@ -106,6 +108,12 @@ def create_backorder(
         Special_order:       true,
         Destination_Country: $destination_country
     }]->(c)
+    CREATE (d)-[:BUYS{
+    Date_Order: date(),
+    Financed: true,
+    Ordered_Year: date().year
+    }]->(c)
+
     RETURN c
     """
 
@@ -119,7 +127,8 @@ def create_backorder(
         "brand":               brand,
         "color":               color,
         "destination_country": destination_country,
-        "group":               "Default" 
+        "group":               "Default" ,
+        "dealership_id":       dealership_id
     }
 
     with driver.session(database=DATABASE) as session:
@@ -145,7 +154,7 @@ def create_backorder(
 
 def get_dealership_visits(
     driver,
-    dealership_id: str,
+    dealership_id: int,
 ):
 
 
@@ -205,15 +214,16 @@ def get_monthly_sales_report(driver, dealership_id: int, month: int):
     relación AT entre Transaction y Dealership.
     """
     query = """
-    MATCH (t:Transaction)-[s:AT]->(d:Dealership {dealershipId: $dealership_id})
-    WHERE s.Date.month = $month
+    MATCH (cst:Customer)-[:MAKES]->(t:Transaction)-[:AT]->(d:Dealership {dealershipId: $dealership_id})
+    MATCH (t)-[:INVOLVES]->(car:Car)
+    WHERE t.Date.month = $month
     RETURN
-        coalesce(t.customerId, t.CustomerId, t.id) AS customer_id,
-        coalesce(t.customerName, t.CustomerName, t.Name, t.name) AS customer_name,
-        s.Date AS sale_date,
-        coalesce(t.Amount, t.amount) AS sale_amount,
-        coalesce(t.CarId, t.carId) AS car_id
-    ORDER BY s.Date DESC
+        cst.customerId  AS customer_id,
+        cst.Name        AS customer_name,
+        t.Date          AS sale_date,
+        t.Final_Price   AS sale_amount,
+        car.carId       AS car_id
+    ORDER BY t.Date DESC
     """
 
     with driver.session(database=DATABASE) as session:
@@ -232,7 +242,7 @@ def get_monthly_sales_report(driver, dealership_id: int, month: int):
 
 def set_discount_old_cars(
     driver,
-    dealership_id: str,
+    dealership_id: int,
     discount_pct: float,   # ej: 0.10 → 10 %
 ):
     """
@@ -274,7 +284,7 @@ def set_discount_old_cars(
 
 def adjust_showroom_msrp(
     driver,
-    dealership_id: str,
+    dealership_id: int,
     adjustment_pct: float,   # ej: 0.05 → +5 %, -0.05 → -5 %
 ):
     """
@@ -283,7 +293,7 @@ def adjust_showroom_msrp(
     """
     query = """
     MATCH (d:Dealership {dealershipId: $dealership_id})-[r:`ON_SHOWROOM`]->(c:Car)
-    SET r.MSRP = round(r.MSRP * (1 + $adjustment_pct), 2)
+    SET r.MSRP = round(r.MSRP * (1 - $adjustment_pct), 2)
     RETURN count(c) AS updated_cars
     """
 
@@ -298,18 +308,21 @@ def adjust_showroom_msrp(
 
 def adjust_showroom_msrp_by_brand(
     driver,
-    dealership_id: str,
+    dealership_id: int,
     brand: str,
-    adjustment_pct: float,   # ej: 0.05 → +5 %, -0.05 → -5 %
+    adjustment_pct: float,   # the pct that was previously applied, e.g. -0.10 for -10%
 ):
     """
-    Aplica un ajuste porcentual al MSRP de la relación ON_SHOWROOM de los carros
-    de una marca específica en el showroom del dealership activo.
+    Restores the original MSRP for cars of a specific brand by reversing the
+    previously applied discount: original = discounted / (1 + adjustment_pct).
     """
+    if adjustment_pct == -1:
+        raise ValueError("adjustment_pct cannot be -1 (division by zero)")
+
     query = """
     MATCH (d:Dealership {dealershipId: $dealership_id})-[r:`ON_SHOWROOM`]->(c:Car)
     WHERE c.Brand = $brand
-    SET r.MSRP = round(r.MSRP * (1 + $adjustment_pct), 2)
+    SET r.MSRP = round(r.MSRP / (1 + $adjustment_pct), 2)
     RETURN count(c) AS updated_cars
     """
 
@@ -322,7 +335,8 @@ def adjust_showroom_msrp_by_brand(
     with driver.session(database=DATABASE) as session:
         rec = session.run(query, params).single()
         return {"updated_cars": rec["updated_cars"]}
-    
+
+
 # TASK 11 — Eliminar propiedad Discount de carros en showroom por marca
 # CYPHER (para probar en Neo4j Browser):
 #   Reemplaza $dealership_id y $brand con valores reales.
@@ -422,6 +436,21 @@ def set_tracking(driver, dealership_id: int, status: str):
         rec = session.run(query, dealership_id=dealership_id, status=status).single()
         return {"updated_shipments": rec["updated_shipments"]}
 
+def update_car_tracking(driver, dealership_id: int, car_id: int, new_status: str):
+    """
+    Sets the Tracking status on the SHIPS relationship for a specific car.
+    """
+    query = """
+    MATCH (d:Dealership {dealershipId: $dealership_id})-[s:SHIPS]->(c:Car {carId: $car_id})
+    SET s.Tracking = $new_status
+    RETURN s.Tracking AS tracking_status
+    """
+    with driver.session(database=DATABASE) as session:
+        rec = session.run(query, dealership_id=dealership_id, car_id=car_id, new_status=new_status).single()
+        if not rec:
+            raise ValueError("Shipment not found")
+        return {"tracking_status": rec["tracking_status"]}
+
 def get_shipments_with_tracking(driver, dealership_id: int):
     """
     Retorna una lista de los carros que están siendo enviados al dealership activo
@@ -442,9 +471,11 @@ def get_all_backorders(driver, dealership_id: int):
     incluyendo detalles del pedido.
     """
     query = """
-    MATCH (d:Dealership {dealershipId: $dealership_id})<-[:`ON_BACKORDER`]-(c:Car)
+    MATCH (d:Dealership {dealershipId: $dealership_id})-[r:`BUYS`]->(c:Car)
     RETURN c.carId AS car_id, c.Model AS model, c.Brand AS brand, c.Color AS color,
-           c.Year AS year, c.Plate AS plate, c.Group AS group
+           c.Year AS year, c.Plate AS plate, c.Group AS group,
+           r.Date_Order AS date_order
+    ORDER BY r.Date_Order DESC
     """
 
     with driver.session(database=DATABASE) as session:
@@ -484,11 +515,6 @@ def delete_showroom_car(
     junto con todas sus relaciones (DETACH DELETE).
     Lanza ValueError si el carro no existe en ese showroom.
     """
-    # Verificar existencia antes de borrar
-    check_query = """
-    MATCH (d:Dealership {dealershipId: $dealership_id})-[:`ON_SHOWROOM`]->(c:Car {carId: $car_id})
-    RETURN c.carId AS car_id
-    """
 
     delete_query = """
     MATCH (d:Dealership {dealershipId: $dealership_id})-[:`ON_SHOWROOM`]->(c:Car {carId: $car_id})
@@ -501,8 +527,7 @@ def delete_showroom_car(
     }
 
     with driver.session(database=DATABASE) as session:
-        rec = session.run(check_query, params).single()
-        if not rec:
-            raise ValueError("Carro no encontrado en el showroom de este dealership")
         session.run(delete_query, params)
         return {"status": "deleted", "car_id": car_id}
+    
+

@@ -102,9 +102,9 @@ class DealershipLogin(Screen):
         yield Header()
         with Vertical():
             yield Label("Name:")
-            yield Input(placeholder="Enter your name...", id="name")
+            yield Input(placeholder="Enter the dealership name...", id="name")
             yield Label("Password:")
-            yield Input(placeholder="Enter your password...", id="password", password=True)
+            yield Input(placeholder="Enter the dealership password...", id="password", password=True)
             yield Button("Submit", id="submit", variant="primary")
             yield Button("Clear", id="clear", variant="default")
             yield Label("\nPress Escape to go back")

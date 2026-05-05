@@ -6,14 +6,17 @@ from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, ListView, ListItem, Label, Button, Input, Static
 from textual.screen import Screen
 from textual.containers import Vertical, Horizontal
+import time
+import subprocess
 
 from Revisar.dealershipTasks import (
     create_backorder, get_dealership_visits, get_showroom_avg_msrp,
     get_monthly_sales_report, set_discount_old_cars, adjust_showroom_msrp,
     adjust_showroom_msrp_by_brand, remove_discount_by_brand, set_tracking,
-    get_cars_on_shipment, get_all_backorders, delete_showroom_car, toggle_test_drive
+    get_cars_on_shipment, get_all_backorders, delete_showroom_car, toggle_test_drive,
+    update_car_tracking,
 )
-from Revisar.dealershipAux import get_all_manufacturers, driver
+from Revisar.dealershipAux import get_all_manufacturers, driver, get_dealership_discount
 from Revisar.buy_car import get_showroom_cars
 
 brand_models = {
@@ -38,6 +41,8 @@ class MenuScreen(Screen):
             ListItem(Label("Track Shipments")),
             ListItem(Label("Discount Management")),
             ListItem(Label("Back Order")),
+            ListItem(Label("View Backorders")),
+            ListItem(Label("View Purchase History")),
             ListItem(Label("Transaction Reports")),
             ListItem(Label("Quit")),
         )
@@ -55,8 +60,36 @@ class MenuScreen(Screen):
             self.app.push_screen(DiscountManagementScreen())
         elif label == "Back Order":
             self.app.push_screen(BackOrderScreen())
+        elif label == "View Backorders":
+            self.app.push_screen(ViewBackordersScreen())
+        elif label == "View Purchase History":
+            self.app.push_screen(ViewPurchaseScreen())
         elif label == "Transaction Reports":
             self.app.push_screen(TransactionReportsScreen())
+
+
+# ─── BackOrder Graph ─────────────────────────────────────────────────────────
+
+class ViewBackordersScreen(Screen):
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Static("Opening backorder graph…", id="status")
+        yield Label("Press Escape to go back")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        script = Path(__file__).resolve().parent / "ShowGraph.py"
+        try:
+            subprocess.Popen([sys.executable, str(script)])
+            self.query_one("#status", Static).update(
+                "Backorder graph opened in a separate window."
+            )
+        except Exception as e:
+            self.query_one("#status", Static).update(f"Error opening graph: {e}")
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.app.pop_screen()
 
 
 # ─── INVENTORY ───────────────────────────────────────────────────────────────
@@ -123,7 +156,7 @@ class InventoryScreen(Screen):
         item_id = event.item.id or ""
         if item_id.startswith("car_"):
             car_id = item_id[len("car_"):]
-            car = next((c for c in self.cars_data if str(c["car_id"]) == car_id), None)
+            car = next((c for c in self.cars_data if c["car_id"] == int(car_id)), None)
             if car:
                 self.app.push_screen(CarManagementScreen(car))
 
@@ -143,7 +176,7 @@ class InventoryScreen(Screen):
                 result.update("✗ Enter adjustment percentage")
                 return
             try:
-                res = adjust_showroom_msrp(driver, did, pct)
+                res = adjust_showroom_msrp(driver, did, -pct)
                 result.update(f"✓ Updated {res['updated_cars']} cars")
             except Exception as e:
                 result.update(f"✗ Error: {e}")
@@ -157,7 +190,7 @@ class InventoryScreen(Screen):
                 result.update("✗ Enter adjustment percentage")
                 return
             try:
-                res = adjust_showroom_msrp_by_brand(driver, did, brand, pct)
+                res = adjust_showroom_msrp_by_brand(driver, did, brand, -pct)
                 result.update(f"✓ Updated {res['updated_cars']} {brand} cars")
             except Exception as e:
                 result.update(f"✗ Error: {e}")
@@ -196,9 +229,11 @@ class CarManagementScreen(Screen):
         if event.button.id == "delete":
             result = self.query_one("#result", Static)
             try:
-                delete_showroom_car(driver, self.app.dealership_id, str(self.car["car_id"]))
+                delete_showroom_car(driver, self.app.dealership_id, self.car["car_id"])
                 result.update("✓ Car deleted from showroom")
                 event.button.disabled = True
+                time.sleep(1)
+                self.app.push_screen(MenuScreen())
             except Exception as e:
                 result.update(f"✗ Error: {e}")
 
@@ -209,10 +244,22 @@ class CarManagementScreen(Screen):
 
 # ─── TRACK SHIPMENTS ─────────────────────────────────────────────────────────
 
+TRACKING_STATUSES = ["PENDING", "IN_TRANSIT", "DELIVERED"]
+
+def _next_status(current: str | None) -> str:
+    if current in TRACKING_STATUSES:
+        return TRACKING_STATUSES[(TRACKING_STATUSES.index(current) + 1) % len(TRACKING_STATUSES)]
+    return TRACKING_STATUSES[0]
+
+def _status_icon(status: str | None) -> str:
+    return {"PENDING": "⏳ PENDING", "IN_TRANSIT": "🚚 IN_TRANSIT", "DELIVERED": "✅ DELIVERED"}.get(status or "", "— UNTRACKED")
+
+
 class TrackShipmentsScreen(Screen):
     CSS = """
     TrackShipmentsScreen { overflow-y: auto; }
-    TrackShipmentsScreen #ship_list { height: 12; }
+    TrackShipmentsScreen #ship_list { height: 14; }
+    TrackShipmentsScreen #hint { padding: 0 0 1 0; color: gray; }
     TrackShipmentsScreen #result { padding: 1 0; }
     """
 
@@ -224,35 +271,47 @@ class TrackShipmentsScreen(Screen):
         yield Header()
         with Vertical():
             yield Label("Shipments in Transit")
+            yield Static("Click a car to cycle its status: PENDING → IN_TRANSIT → DELIVERED", id="hint")
             yield ListView(id="ship_list")
-            yield Button("Mark Untracked as PENDING", id="mark_pending", variant="primary")
             yield Static("", id="result")
         yield Label("Press Escape to go back")
         yield Footer()
 
+    def _load_list(self, lv: ListView) -> None:
+        for item in list(lv.query(ListItem)):
+            item.remove()
+        self.shipments_data = get_cars_on_shipment(driver, self.app.dealership_id)
+        for ship in self.shipments_data:
+            status = ship.get("tracking_status")
+            lv.mount(ListItem(Label(
+                f"{ship.get('brand','')} {ship.get('model','')} ({ship.get('year','')})  —  {_status_icon(status)}"
+            )))
+        if not self.shipments_data:
+            lv.mount(ListItem(Label("No active shipments")))
+
     def on_mount(self) -> None:
-        did = self.app.dealership_id
         lv = self.query_one("#ship_list", ListView)
         try:
-            self.shipments_data = get_cars_on_shipment(driver, did)
-            for ship in self.shipments_data:
-                tracking = ship.get("tracking_status") or "—"
-                lv.mount(ListItem(Label(
-                    f"{ship.get('brand','')} {ship.get('model','')} {ship.get('year','')}  [{tracking}]"
-                )))
-            if not self.shipments_data:
-                lv.mount(ListItem(Label("No active shipments")))
+            self._load_list(lv)
         except Exception as e:
             lv.mount(ListItem(Label(f"Error: {e}")))
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "mark_pending":
-            result = self.query_one("#result", Static)
-            try:
-                res = set_tracking(driver, self.app.dealership_id, "PENDING")
-                result.update(f"✓ Marked {res['updated_shipments']} shipments as PENDING")
-            except Exception as e:
-                result.update(f"✗ Error: {e}")
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        idx = event.list_view.index
+        if not (0 <= idx < len(self.shipments_data)):
+            return
+        ship = self.shipments_data[idx]
+        result = self.query_one("#result", Static)
+        new_status = _next_status(ship.get("tracking_status"))
+        try:
+            update_car_tracking(driver, self.app.dealership_id, ship["car_id"], new_status)
+            ship["tracking_status"] = new_status
+            event.item.query_one(Label).update(
+                f"{ship.get('brand','')} {ship.get('model','')} ({ship.get('year','')})  —  {_status_icon(new_status)}"
+            )
+            result.update(f"✓ Updated to {new_status}")
+        except Exception as e:
+            result.update(f"✗ Error: {e}")
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -308,6 +367,7 @@ class SetOldCarsDiscountScreen(Screen):
                 return
             try:
                 res = set_discount_old_cars(driver, self.app.dealership_id, pct)
+                adjust_showroom_msrp(driver, self.app.dealership_id, pct)  # refresh showroom prices
                 result.update(f"✓ Discount applied to {res['updated_cars']} cars")
             except Exception as e:
                 result.update(f"✗ Error: {e}")
@@ -355,7 +415,10 @@ class RemoveDiscountScreen(Screen):
                 result.update("✗ Select a brand first")
                 return
             try:
+                discount_brand = get_dealership_discount(driver, self.app.dealership_id, self.sel_brand)
+                applied_discount = discount_brand.get("discount", {}).get("Percentage", 0)
                 res = remove_discount_by_brand(driver, self.app.dealership_id, self.sel_brand)
+                adjust_showroom_msrp_by_brand(driver, self.app.dealership_id, self.sel_brand, applied_discount)  # refresh showroom prices
                 result.update(f"✓ Removed discount from {res['updated_cars']} {self.sel_brand} cars")
             except Exception as e:
                 result.update(f"✗ Error: {e}")
@@ -384,7 +447,7 @@ class BackOrderScreen(Screen):
         self.sel_model:           str | None = None
         self.sel_color:           str | None = None
         self.sel_fuel:            str | None = None
-        self.sel_manufacturer_id: str | None = None
+        self.sel_manufacturer_id = None
         self.manufacturers: list = []
 
     def compose(self) -> ComposeResult:
@@ -419,7 +482,6 @@ class BackOrderScreen(Screen):
             with Horizontal(id="action-row"):
                 yield Button("Submit",         id="submit",         variant="primary")
                 yield Button("Clear",          id="clear",          variant="default")
-                yield Button("View Backorders", id="view_backorders", variant="default")
 
             yield Static("", id="result")
 
@@ -431,9 +493,9 @@ class BackOrderScreen(Screen):
             self.manufacturers = get_all_manufacturers(driver)
             mfr_row = self.query_one("#mfr_row", Horizontal)
             self.query_one("#mfr_loading", Label).remove()
-            for m in self.manufacturers:
+            for i, m in enumerate(self.manufacturers):
                 label = f"{m['Brand']} – {m['Group']}"
-                mfr_row.mount(Button(label, id=f"mfr_{m['manufacturerId']}"))
+                mfr_row.mount(Button(label, id=f"mfr_{i}"))
         except Exception as e:
             self.query_one("#mfr_loading", Label).update(f"Error loading manufacturers: {e}")
 
@@ -457,9 +519,10 @@ class BackOrderScreen(Screen):
         bid = event.button.id or ""
 
         if bid.startswith("mfr_"):
-            self.sel_manufacturer_id = bid[len("mfr_"):]
-            for btn in self.query_one("#mfr_row", Horizontal).query(Button):
-                btn.variant = "primary" if btn.id == bid else "default"
+            idx = int(bid[len("mfr_"):])
+            mfr = self.manufacturers[idx]
+            self.sel_manufacturer_id = mfr["manufacturerId"]
+            self._highlight("mfr_row", "mfr", idx)
 
         elif bid.startswith("brand_"):
             self.sel_brand = bid[len("brand_"):]
@@ -482,15 +545,13 @@ class BackOrderScreen(Screen):
             self._submit()
         elif bid == "clear":
             self._clear()
-        elif bid == "view_backorders":
-            self.app.push_screen(ViewBackordersScreen())
+        
 
     def _submit(self) -> None:
         result = self.query_one("#result", Static)
         country = self.query_one("#destination_country", Input).value.strip()
         missing = [
             name for name, val in [
-                ("Manufacturer",        self.sel_manufacturer_id),
                 ("Brand",               self.sel_brand),
                 ("Model",               self.sel_model),
                 ("Color",               self.sel_color),
@@ -511,6 +572,7 @@ class BackOrderScreen(Screen):
                 brand=self.sel_brand,
                 color=self.sel_color,
                 destination_country=country,
+                dealership_id=self.app.dealership_id
             )
             result.update(
                 f"✓ Back order submitted!\n"
@@ -539,26 +601,35 @@ class BackOrderScreen(Screen):
             self.app.pop_screen()
 
 
-class ViewBackordersScreen(Screen):
+class ViewPurchaseScreen(Screen):
+    CSS = "ViewPurchaseScreen #order_list { height: 20; }"
+
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Static("Loading…", id="content")
+        yield Label("Purchase History  (newest first)")
+        yield ListView(id="order_list")
+        yield Static("", id="status")
         yield Label("Press Escape to go back")
         yield Footer()
 
     def on_mount(self) -> None:
+        lv = self.query_one("#order_list", ListView)
         try:
             orders = get_all_backorders(driver, self.app.dealership_id)
             if not orders:
-                self.query_one("#content", Static).update("No backorders found.")
+                lv.mount(ListItem(Label("No purchases found.")))
                 return
-            lines = [
-                f"{o.get('brand','')} {o.get('model','')} — {o.get('color','')} — ID: {o.get('car_id','')}"
-                for o in orders
-            ]
-            self.query_one("#content", Static).update("\n".join(lines))
+            for o in orders:
+                date_str = str(o.get("date_order", ""))[:10] or "—"
+                label = (
+                    f"{date_str}  |  "
+                    f"{o.get('year','')} {o.get('brand','')} {o.get('model','')}  |  "
+                    f"{o.get('color','')}  |  Plate: {o.get('plate','—')}"
+                )
+                lv.mount(ListItem(Label(label)))
+            self.query_one("#status", Static).update(f"{len(orders)} orders")
         except Exception as e:
-            self.query_one("#content", Static).update(f"Error: {e}")
+            lv.mount(ListItem(Label(f"Error: {e}")))
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -673,9 +744,9 @@ class VisitsReportScreen(Screen):
         try:
             res = toggle_test_drive(
                 driver,
-                str(self.app.dealership_id),
-                str(visit["customer_id"]),
-                str(visit["visit_date"])[:10],
+                self.app.dealership_id,
+                visit["customer_id"],
+                str(visit["visit_date"]),
             )
             visit["test_drive"] = res["new_test_drive_value"]
             td = "✓ Test Drive" if visit["test_drive"] else "✗ Test Drive"
@@ -738,5 +809,4 @@ class MyApp(App):
         self.push_screen(MenuScreen())
 
 
-if __name__ == "__main__":
-    MyApp().run()
+#

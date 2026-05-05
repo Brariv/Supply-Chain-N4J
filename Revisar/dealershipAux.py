@@ -84,11 +84,11 @@ def get_all_manufacturers(driver):
 # Get discount of car brand of a dealership
 def get_dealership_discount(driver, dealership_id: int, brand: str):
     query = """
-    MATCH (:Dealership {dealershipId: $dealership_id})-[:OFFERS_DISCOUNT]->(d:Discount {Brand: $brand})
-    RETURN d {
-        .discountId,
+    MATCH (:Dealership {dealershipId: $dealership_id})-[:ON_SHOWROOM]->(c:Car {Brand: $brand})
+
+    RETURN c {
         .Brand,
-        .Percentage
+        .Discount
     } AS discount
     """
     with driver.session(database=DATABASE) as session:

@@ -143,8 +143,9 @@ def create_transaction_from_offers(
     offers: list,
     car_id: int,
     customer_id: int,
+    dealership_id: int,
     payment_type: str = "Unknown",
-    financing_months: int = None #type: ignore[assignment]
+    financing_months: int = None
 ):
     if not success:
         return {
@@ -168,10 +169,9 @@ def create_transaction_from_offers(
     MATCH (cst:Customer {customerId: $customer_id})
     MATCH (car:Car {carId: $car_id})
 
-    OPTIONAL MATCH (d:Dealership)-[r:`ON_SHOWROOM`]->(car)
+    MATCH (d:Dealership {dealershipId: $dealership_id})-[r:`ON_SHOWROOM`]->(car)
 
-    WITH cst, car, r
-    WHERE cst IS NOT NULL AND car IS NOT NULL
+    WITH cst, car, d, r
 
     CREATE (t:Transaction {
         id: $transaction_id,
@@ -195,7 +195,8 @@ def create_transaction_from_offers(
     }]->(car)
 
     CREATE (t)-[:AT {
-        Date: date()
+        Date: date(),
+        dealershipId: $dealership_id
     }]->(d)
 
     FOREACH (_ IN CASE WHEN r IS NOT NULL THEN [1] ELSE [] END | DELETE r)
@@ -212,6 +213,7 @@ def create_transaction_from_offers(
     params = {
         "transaction_id": str(uuid.uuid4()),
         "customer_id": customer_id,
+        "dealership_id": dealership_id,
         "car_id": car_id,
         "msrp": msrp,
         "final_price": final_price,
@@ -227,3 +229,4 @@ def create_transaction_from_offers(
         if not rec:
             raise ValueError("Customer o Car no encontrados")
         return rec["t"]
+    
