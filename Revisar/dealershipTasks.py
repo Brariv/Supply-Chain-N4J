@@ -55,8 +55,6 @@ brand_models = {
 }
 
 
-import uuid
-
 def create_backorder(
     driver,
     manufacturer_id: str,
@@ -113,7 +111,6 @@ def create_backorder(
 
     params = {
         "manufacturer_id":     manufacturer_id,
-        "car_id":              uuid.uuid4().int,
         "body_type":           body_type,
         "fuel_type":           fuel_type,
         "model":               model,
@@ -365,7 +362,7 @@ def remove_discount_by_brand(
 # CYPHER (para probar en Neo4j Browser):
 #   Reemplaza $dealership_id, $customer_id y $visit_date con valores reales.
 #
-# MATCH (d:Dealership {dealershipId: $dealership_id})<-[v:Visits]-(cst:Customer {id: $customer_id})
+# MATCH (d:Dealership {dealershipId: $dealership_id})<-[v:VISITS]-(cst:Customer {id: $customer_id})
 # WHERE v.Date = date($visit_date)
 # SET v.Test_Drive = NOT v.Test_Drive
 # RETURN v.Test_Drive AS new_value
@@ -381,11 +378,11 @@ def toggle_test_drive(
     relación Visits específica identificada por dealership, customer y fecha.
     """
     query = """
-    MATCH (d:Dealership {dealershipId: $dealership_id})<-[v:Visits]-(cst:Customer {id: $customer_id})
+    MATCH (d:Dealership {dealershipId: $dealership_id})<-[v:VISITS]-(cst:Customer {customerId: $customer_id})
     WHERE date(v.Date) = date($visit_date)
     SET v.Test_Drive = NOT v.Test_Drive
     RETURN v.Test_Drive AS new_value
-    """
+    """     
 
     params = {
         "dealership_id": dealership_id,
@@ -415,7 +412,7 @@ def set_tracking(driver, dealership_id: int, status: str):
     Tracking: NULL y les asigna el valor 'PENDING'.
     """
     query = """
-    MATCH (d:Dealership {dealershipId: $dealership_id})-[s:Ships]->(c:Car)
+    MATCH (d:Dealership {dealershipId: $dealership_id})-[s:SHIPS]->(c:Car)
     WHERE s.Tracking IS NULL
     SET s.Tracking = $status
     RETURN count(s) AS updated_shipments
@@ -431,7 +428,7 @@ def get_shipments_with_tracking(driver, dealership_id: int):
     junto con su estado de Tracking.
     """
     query = """
-    MATCH (d:Dealership {dealershipId: $dealership_id})-[s:Ships]->(c:Car)
+    MATCH (d:Dealership {dealershipId: $dealership_id})-[s:SHIPS]->(c:Car)
     RETURN c.carId AS car_id, s.Tracking AS tracking_status
     """
 
@@ -460,7 +457,7 @@ def get_cars_on_shipment(driver, dealership_id: int):
     incluyendo detalles del carro y estado de envío.
     """
     query = """
-    MATCH (d:Dealership {dealershipId: $dealership_id})-[s:Ships]->(c:Car)
+    MATCH (d:Dealership {dealershipId: $dealership_id})-[s:SHIPS]->(c:Car)
     RETURN c.carId AS car_id, c.Model AS model, c.Brand AS brand, c.Color AS color,
            c.Year AS year, c.Plate AS plate, c.Group AS group, s.Tracking AS tracking_status
     """
