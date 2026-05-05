@@ -88,17 +88,21 @@ def create_backorder(
     body_type = brand_models[brand][model]
 
     query = """
-    MATCH (m:Manufacturer {id: $manufacturer_id})
-    CALL apoc.create.node(
-        ['Car', $body_type, $fuel_type],
+    MATCH (m:Manufacturer {manufacturerId: $manufacturer_id})
+    WITH m,
+        ['Car', $body_type, $fuel_type] AS labels,
         {
             carId:  $car_id,
             Model:  $model,
             Brand:  $brand,
-            Color:  $color
-        }
-    ) YIELD node AS c
-    CREATE (m)-[:`ON_BACKORDER` {
+            Color:  $color,
+            Plate:  $plate,
+            Year:   $year,
+            Group:  $group
+        } AS props      
+    CREATE (c:$(labels))
+    SET c = props
+    CREATE (m)-[:ON_BACKORDER {
         Date_start:          date(),
         Special_order:       true,
         Destination_Country: $destination_country
@@ -108,31 +112,31 @@ def create_backorder(
 
     params = {
         "manufacturer_id":     manufacturer_id,
-        "car_id":              str(uuid.uuid4()),
+        "car_id":              uuid.uuid4().int,
         "body_type":           body_type,
         "fuel_type":           fuel_type,
         "model":               model,
-        "year":                date.today().year,  # Asignar año actual por defecto
-        "plate":               faker.license_plate(),  # Generar placa aleatoria
+        "year":                date.today().year,  
+        "plate":               faker.license_plate(), 
         "brand":               brand,
         "color":               color,
         "destination_country": destination_country,
+        "group":               "Default" 
     }
 
     with driver.session(database=DATABASE) as session:
         rec = session.run(query, params).single()
         if not rec:
-            raise ValueError("Manufacturer no encontrado o APOC no disponible")
+            raise ValueError("Manufacturer no encontrado")
         return rec["c"]
 
 
-# TASK 4 — Ver últimas visitas de un concesionario (rango dinámico de 1 mes)
+# TASK 4 — Ver últimas visitas de un concesionario
 # CYPHER (para probar en Neo4j Browser):
 #
 # MATCH (d:Dealership {dealershipId: $dealership_id})<-[v:Visits]-(cst:Customer)
-# WHERE v.Date >= date($date_from) AND v.Date <= date($date_to)
 # RETURN
-#     cst.id          AS customer_id,
+#     cst.customerId          AS customer_id,
 #     cst.Name        AS customer_name,
 #     cst.Phone       AS phone,
 #     v.Date          AS visit_date,
@@ -144,35 +148,23 @@ def create_backorder(
 def get_dealership_visits(
     driver,
     dealership_id: str,
-    date_from: date = None,   # si es None se usa hoy - 1 mes #type: ignore[assignment]
-    date_to:   date = None,   # si es None se usa hoy #type: ignore[assignment]
 ):
-    """
-    Devuelve las visitas recibidas por el dealership en el rango [date_from, date_to].
-    Por defecto el rango es el último mes calendario.
-    """
-    if date_to is None:
-        date_to = date.today()
-    if date_from is None:
-        date_from = date_to - relativedelta(months=1)
+
 
     query = """
-    MATCH (d:Dealership {dealershipId: $dealership_id})<-[v:Visits]-(cst:Customer)
-    WHERE v.Date >= date($date_from) AND v.Date <= date($date_to)
-    RETURN
-        cst.id             AS customer_id,
-        cst.Name           AS customer_name,
-        cst.Phone          AS phone,
-        v.Date             AS visit_date,
-        v.Has_Reservation  AS has_reservation,
-        v.Test_Drive       AS test_drive
-    ORDER BY v.Date DESC
+        MATCH (d:Dealership {dealershipId: $dealership_id})<-[v:VISITS]-(cst:Customer)
+        RETURN
+            cst.customerId             AS customer_id,
+            cst.Name           AS customer_name,
+            cst.Phone          AS phone,
+            v.Date             AS visit_date,
+            v.Has_Reservation  AS has_reservation,
+            v.Test_Drive       AS test_drive
+        ORDER BY v.Date DESC
     """
 
     params = {
-        "dealership_id": dealership_id,
-        "date_from":     str(date_from),
-        "date_to":       str(date_to),
+        "dealership_id": dealership_id
     }
 
     with driver.session(database=DATABASE) as session:
@@ -190,7 +182,7 @@ def get_dealership_visits(
 #     min(r.MSRP)     AS min_msrp,
 #     max(r.MSRP)     AS max_msrp
 
-def get_showroom_avg_msrp(driver, dealership_id: str):
+def get_showroom_avg_msrp(driver, dealership_id: int):
     """
     Retorna estadísticas de MSRP (avg, min, max, count) de todos los carros
     que están actualmente en el showroom del dealership.
@@ -206,11 +198,11 @@ def get_showroom_avg_msrp(driver, dealership_id: str):
 
     with driver.session(database=DATABASE) as session:
         rec = session.run(query, dealership_id=dealership_id).single()
-        if not rec:
-            raise ValueError("Dealership no encontrado o sin carros en showroom")
+        if rec["total_cars"] == 0:
+            raise ValueError("Sin carros en showroom")
         return rec.data()
 
-def get_monthly_sales_report(driver, dealership_id: str, month: int):
+def get_monthly_sales_report(driver, dealership_id: int, month: int):
     """
     Retorna un reporte de ventas mensuales para el dealership activo, incluyendo
     detalles de cada venta (carro, cliente, fecha, monto).
