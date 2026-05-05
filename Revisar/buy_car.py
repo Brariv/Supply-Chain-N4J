@@ -144,7 +144,7 @@ def create_transaction_from_offers(
     car_id: int,
     customer_id: int,
     payment_type: str = "Unknown",
-    financing_months: int = None
+    financing_months: int = None #type: ignore[assignment]
 ):
     if not success:
         return {

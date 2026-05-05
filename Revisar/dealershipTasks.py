@@ -112,6 +112,8 @@ def create_backorder(
         "body_type":           body_type,
         "fuel_type":           fuel_type,
         "model":               model,
+        "year":                date.today().year,  # Asignar año actual por defecto
+        "plate":               faker.license_plate(),  # Generar placa aleatoria
         "brand":               brand,
         "color":               color,
         "destination_country": destination_country,
