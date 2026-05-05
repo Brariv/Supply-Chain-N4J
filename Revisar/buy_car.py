@@ -182,13 +182,13 @@ def create_transaction_from_offers(
         Financing_Months: $financing_months
     })
 
-    CREATE (cst)-[:Makes {
+    CREATE (cst)-[:MAKES {
         Offers: $offers,
         Notes: $notes,
         Custom_Order: false
     }]->(t)
 
-    CREATE (t)-[:Involves {
+    CREATE (t)-[:INVOLVES {
         MSRP: $msrp,
         Date: date(),
         Discount: $discount
