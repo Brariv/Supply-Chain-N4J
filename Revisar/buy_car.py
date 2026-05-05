@@ -5,7 +5,7 @@ import random
 from datetime import date
 import uuid
 
-load_dotenv()
+load_dotenv(override=True)
 
 URI = os.getenv("URI")
 USER = os.getenv("USER")
@@ -142,7 +142,9 @@ def create_transaction_from_offers(
     success: bool,
     offers: list,
     car_id: int,
-    customer_id: str
+    customer_id: int,
+    payment_type: str = "Unknown",
+    financing_months: int = None
 ):
     if not success:
         return {
@@ -163,10 +165,10 @@ def create_transaction_from_offers(
     discount_pct = round(100 * (1 - final_price / msrp), 2)
 
     query = """
-    MATCH (cst:Customer {id: $customer_id})
+    MATCH (cst:Customer {customerId: $customer_id})
     MATCH (car:Car {carId: $car_id})
 
-    OPTIONAL MATCH (d:Dealership)-[r:`On Showroom`]->(car)
+    OPTIONAL MATCH (d:Dealership)-[r:`ON_SHOWROOM`]->(car)
 
     WITH cst, car, r
     WHERE cst IS NOT NULL AND car IS NOT NULL
@@ -192,11 +194,9 @@ def create_transaction_from_offers(
         Discount: $discount
     }]->(car)
 
-    // eliminar relación On Showroom si existe
     FOREACH (_ IN CASE WHEN r IS NOT NULL THEN [1] ELSE [] END | DELETE r)
 
-    // crear relación Owns
-    CREATE (cst)-[:Owns {
+    CREATE (cst)-[:OWNS {
         Since: date(),
         Milage: 0,
         Has_Crashed: false
@@ -212,8 +212,8 @@ def create_transaction_from_offers(
         "msrp": msrp,
         "final_price": final_price,
         "offers": offers,
-        "payment_type": "Unknown",
-        "financing_months": None,
+        "payment_type": payment_type,
+        "financing_months": financing_months,
         "notes": "Auto-generated negotiation",
         "discount": f"{discount_pct}%"
     }

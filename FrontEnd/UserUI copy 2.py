@@ -1,14 +1,15 @@
-import sys
-from pathlib import Path
+# import sys
+# import os
+# sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Revisar'))
 
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, ListView, ListItem, Label, Input, Button, Static
 from textual.screen import Screen
 from textual.containers import Vertical, Horizontal
 import random
+import time
 
-# Allow running this file directly with `python FrontEnd/Base.py`
-sys.path.append(str(Path(__file__).resolve().parent.parent))
+# from Revisar.client_queries import *
 
 from Revisar.client_queries import (
     driver,
@@ -23,13 +24,6 @@ from Revisar.client_queries import (
     delete_customer_and_cars,
     remove_car_from_customer,
     remove_all_cars_from_customer,
-    create_visit,
-)
-from Revisar.dealershipAux import get_all_dealerships
-from Revisar.buy_car import (
-    get_showroom_cars,
-    get_msrp,
-    create_transaction_from_offers,
 )
 
 RATING_LABELS = {1: "Poor", 2: "Fair", 3: "Good", 4: "Very Good", 5: "Excellent"}
@@ -70,11 +64,11 @@ class MenuScreen(Screen):
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        label = event.item.query_one(Label).render().plain
+        label = event.item.query_one(Label).render()
         if label == "Quit":
             self.app.exit()
         elif label == "Visit DealerShip":
-            self.app.push_screen(ShowDealershipsScreen())
+            self.app.push_screen(ShowRoomScreen())
         elif label == "Show My Cars":
             self.app.push_screen(ShowCarsScreen())
         elif label == "Account":
@@ -149,7 +143,7 @@ class RemoveCarScreen(Screen):
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        label = event.item.query_one(Label).render().plain
+        label = event.item.query_one(Label).render()
         if label == "Yes, remove this car":
             try:
                 remove_car_from_customer(driver, self.app.customer_id, self.car["car_id"])
@@ -165,77 +159,38 @@ class RemoveCarScreen(Screen):
 
 
 # ---------------------------------------------------------------------------
-# Visit DealerShip  →  get_showroom_cars  →  NegotiationScreen
-#                   →  escape  →  RateVisitScreen  →  add_visit_rating
+# Visit DealerShip  →  RateVisitScreen  →  add_visit_rating
+# (purchase workflow screens kept intact but not connected to DB)
 # ---------------------------------------------------------------------------
 
-class ShowDealershipsScreen(Screen):
-    def compose(self) -> ComposeResult:
-        yield Header()
-        yield Label("Select a Dealership to Visit")
-        yield ListView(id="dealerships_list")
-        yield Static("", id="status")
-        yield Label("\nPress Escape to go back")
-        yield Footer()
-
-    def on_mount(self) -> None:
-        try:
-            dealerships = get_all_dealerships(driver)
-            lv = self.query_one("#dealerships_list", ListView)
-            if dealerships:
-                for d in dealerships:
-                    lv.mount(ListItem(Label(d.get("Name", "Unknown"))))
-            else:
-                self.query_one("#status", Static).update("No dealerships found.")
-        except Exception as e:
-            self.query_one("#status", Static).update(f"Error loading dealerships: {e}")
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        idx = event.list_view.index
-        if idx is not None:
-            self.app.push_screen(ShowRoomScreen(dealership_id=idx+1))  # Assuming dealership IDs start at 1
-
-    def on_key(self, event) -> None:
-        if event.key == "escape":
-            self.app.pop_screen()
-
 class ShowRoomScreen(Screen):
+    CARS_EXAMPLE = [
+        {"make": "Toyota", "model": "Camry", "year": 2020},
+        {"make": "Honda", "model": "Civic", "year": 2019},
+        {"make": "Ford", "model": "Mustang", "year": 2021},
+        {"make": "Tesla", "model": "Model 3", "year": 2022},
+        {"make": "Chevrolet", "model": "Impala", "year": 2018},
+        {"make": "BMW", "model": "3 Series", "year": 2020},
+        {"make": "Audi", "model": "A4", "year": 2019},
+        {"make": "Mercedes-Benz", "model": "C-Class", "year": 2021},
+    ]
+
     def __init__(self, dealership_id: int = 1):
         super().__init__()
         self.dealership_id = dealership_id
-        self.cars_data = []
-        self.apointment = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Label("Welcome to the showroom!")
-        yield ListView(id="cars_list")
-        yield Static("", id="status")
+        yield ListView(
+            *[ListItem(Label(f"{c['year']} {c['make']} {c['model']}")) for c in self.CARS_EXAMPLE]
+        )
         yield Label("\nPress Escape to rate your visit and go back")
         yield Footer()
 
-    def on_mount(self) -> None:
-        try:
-            self.apointment = create_visit(driver, self.app.customer_id, self.dealership_id)
-            self.cars_data = get_showroom_cars(driver, self.dealership_id)
-            lv = self.query_one("#cars_list", ListView)
-            if self.cars_data:
-                for car in self.cars_data:
-                    label = (
-                        f"{car.get('year', '?')} {car.get('brand', '?')} {car.get('model', '?')}"
-                        f" | ${car.get('msrp', 'N/A')} | {car.get('color', '')}"
-                    )
-                    lv.mount(ListItem(Label(label)))
-            else:
-                self.query_one("#status", Static).update("No cars available in this showroom.")
-        except Exception as e:
-            self.query_one("#status", Static).update(f"Error loading showroom: {e}")
-
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        idx = event.list_view.index
-        if self.cars_data and idx is not None and 0 <= idx < len(self.cars_data):
-            car = {**self.cars_data[idx], "dealership_id": self.dealership_id}
-            self.app.push_screen(NegotiationScreen(car))
+        car_info = event.item.query_one(Label).render()
+        self.app.push_screen(NegotiationScreen(car_info))
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -283,7 +238,6 @@ class RateVisitScreen(Screen):
         super().__init__()
         self.rating = 0
         self.dealership_id = dealership_id
-
 
     def compose(self):
         yield Header()
@@ -355,19 +309,17 @@ class VisitHistoryScreen(Screen):
             return
         v = self.visits_data[idx]
         existing_rating = 0
-        dealership_id = 0
         try:
             rated = get_rated_visits(driver, self.app.customer_id)
             for rv in rated.get("rated_visits", []):
                 if rv["dealership"] == v.get("d.Name") and rv["date"] == v.get("r.Date"):
                     existing_rating = rv.get("rating", 0)
-                    dealership_id = rv.get("dealership_id", 0)
                     break
         except Exception:
             pass
         self.app.push_screen(PastRatingScreen(
             customer_id=self.app.customer_id,
-            dealership_id=dealership_id,
+            dealership_id=v.get("dealership_id"),
             dealership_name=v.get("d.Name", ""),
             date=v.get("r.Date", ""),
             existing_rating=existing_rating,
@@ -545,7 +497,7 @@ class AccountManagmentScreen(Screen):
             self.query_one("#profile_error", Static).update(f"Error loading profile: {e}")
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        label = event.item.query_one(Label).render().plain
+        label = event.item.query_one(Label).render()
         if label == "Update Profile":
             self.app.push_screen(UpdateProfileScreen())
         elif label == "Privacy Settings":
@@ -624,7 +576,7 @@ class PrivacySettingsScreen(Screen):
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        label = event.item.query_one(Label).render().plain
+        label = event.item.query_one(Label).render()
         if label == "Yes, remove the date":
             try:
                 result = remove_since_from_all_cars(driver, self.app.customer_id)
@@ -656,7 +608,7 @@ class DeleteCarsScreen(Screen):
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        label = event.item.query_one(Label).render().plain
+        label = event.item.query_one(Label).render()
         if label == "Yes, delete all my cars":
             try:
                 result = remove_all_cars_from_customer(driver, self.app.customer_id)
@@ -688,7 +640,7 @@ class DeleteAccountScreen(Screen):
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        label = event.item.query_one(Label).render().plain
+        label = event.item.query_one(Label).render()
         if label == "Yes, delete my account":
             try:
                 delete_customer_and_cars(driver, self.app.customer_id)
@@ -704,9 +656,7 @@ class DeleteAccountScreen(Screen):
 
 
 # ---------------------------------------------------------------------------
-# Purchase vehicle workflow
-# ShowRoomScreen → NegotiationScreen → TransactionScreen → PaymentScreen
-#   get_showroom_cars / get_msrp / create_transaction_from_offers
+# Purchase vehicle workflow  —  NOT connected to DB
 # ---------------------------------------------------------------------------
 
 class InfoScreen(Screen):
@@ -724,57 +674,42 @@ class InfoScreen(Screen):
 
 
 class NegotiationScreen(Screen):
-    def __init__(self, car_data: dict):
+    def __init__(self, car_info: str):
         super().__init__()
-        self.car_data = car_data
-        self.car_id = car_data.get("car_id")
-        self.msrp = float(car_data.get("msrp") or 0)
-        # Replicate negotiate_price acceptance range: 0–15 % around MSRP
-        self.pct = random.uniform(0, 0.15)
-        self.min_price = round(self.msrp * (1 - self.pct), 2)
-        # offers[0] must be the MSRP (required by create_transaction_from_offers)
-        self.offers = [self.msrp]
+        self.car_info = car_info
+        self.price = random.randint(10000, 50000)
+        self.accepted_price = random.uniform(0.05, 0.15)
+        self.offers = []
 
     def compose(self) -> ComposeResult:
-        year = self.car_data.get("year", "")
-        brand = self.car_data.get("brand", "")
-        model = self.car_data.get("model", "")
-        yield Header()
-        yield Label(f"You selected: {year} {brand} {model}")
-        yield Label(f"MSRP: ${self.msrp:,.2f}")
+        yield Label(f"You selected: {self.car_info}")
+        yield Label(f"The MSRP is: ${self.price}")
         with Vertical():
-            yield Label("Your offer:")
+            yield Label("Offer:")
             yield Input(placeholder="Enter your offer...", id="offer")
-            yield Button("Submit offer", id="submit", variant="primary")
+            yield Button("Submit", id="submit", variant="primary")
             yield Button("Clear", id="clear", variant="default")
         yield Static("", id="result")
         yield Static("", id="offer_history")
-        yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        raw = self.query_one("#offer", Input).value.strip()
+        offer = self.query_one("#offer", Input).value
         result = self.query_one("#result", Static)
         offer_history = self.query_one("#offer_history", Static)
 
         if event.button.id == "submit":
-            if not raw:
-                result.update("✗ Please enter an offer")
-                return
-            try:
-                offer = round(float(raw), 2)
-            except ValueError:
-                result.update("✗ Please enter a valid number")
-                return
-
             self.offers.append(offer)
-            history_lines = [f"${o:,.2f}" for o in self.offers[1:]]
-            offer_history.update("Offers made:\n" + "\n".join(history_lines))
-
-            if offer >= self.min_price:
-                result.update(f"✓ Offer accepted: ${offer:,.2f}")
-                self.app.push_screen(TransactionScreen(self.car_data, self.offers))
+            if offer:
+                offer = int(offer)
+                if offer >= self.price * (1 - self.accepted_price):
+                    result.update(f"✓ Offer accepted: ${offer}")
+                    offer_history.update("Offer History:\n" + "\n".join(self.offers))
+                    self.app.push_screen(TransactionScreen(self.car_info, offer))
+                else:
+                    result.update(f"✗ Offer too low: ${offer}")
+                    offer_history.update("Offer History:\n" + "\n".join(self.offers))
             else:
-                result.update(f"✗ Offer rejected: ${offer:,.2f}  (minimum ~${self.min_price:,.2f})")
+                result.update("✗ Please enter an offer")
         elif event.button.id == "clear":
             self.query_one("#offer", Input).value = ""
             result.update("")
@@ -785,21 +720,15 @@ class NegotiationScreen(Screen):
 
 
 class TransactionScreen(Screen):
-    def __init__(self, car_data: dict, offers: list):
+    def __init__(self, car_info: str, agreed_price: int):
         super().__init__()
-        self.car_data = car_data
-        self.offers = offers
-        self.agreed_price = offers[-1]
+        self.car_info = car_info
+        self.agreed_price = agreed_price
 
     def compose(self) -> ComposeResult:
-        year = self.car_data.get("year", "")
-        brand = self.car_data.get("brand", "")
-        model = self.car_data.get("model", "")
-        yield Header()
-        yield Label("Transaction Summary")
-        yield Label(f"Car:    {year} {brand} {model}")
-        yield Label(f"Price:  ${self.agreed_price:,.2f}")
-        yield Label("\nSelect a payment method:")
+        yield Label("Transaction Reports")
+        yield Label(f"You agreed to buy {self.car_info} for ${self.agreed_price}")
+        yield Label("\nPayment Options:")
         yield ListView(
             ListItem(Label("Credit Card")),
             ListItem(Label("Financing")),
@@ -810,8 +739,8 @@ class TransactionScreen(Screen):
         yield Footer()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        selected_payment = event.item.query_one(Label).render().plain
-        self.app.push_screen(PaymentScreen(selected_payment, self.car_data, self.offers))
+        selected_payment = event.item.query_one(Label).render()
+        self.app.push_screen(PaymentScreen(selected_payment, self.agreed_price))
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -819,17 +748,15 @@ class TransactionScreen(Screen):
 
 
 class PaymentScreen(Screen):
-    def __init__(self, selected_payment: str, car_data: dict, offers: list):
+    def __init__(self, selected_payment: str, Aggreed_Price: int):
         super().__init__()
         self.selected_payment = selected_payment
-        self.car_data = car_data
-        self.offers = offers
-        self.agreed_price = offers[-1]
+        self.Aggreed_Price = Aggreed_Price
 
     def compose(self) -> ComposeResult:
-        yield Header()
-        yield Label(f"Payment — {self.selected_payment}  |  Total: ${self.agreed_price:,.2f}")
+        yield Label("Payment Options")
         if self.selected_payment == "Credit Card":
+            yield Label("You selected Credit Card. Please enter your card details.")
             with Vertical():
                 yield Label("Card Number:")
                 yield Input(placeholder="Enter your card number...", id="card_number")
@@ -840,6 +767,7 @@ class PaymentScreen(Screen):
                 yield Button("Submit", id="submit", variant="primary")
                 yield Button("Clear", id="clear", variant="default")
         elif self.selected_payment == "Financing":
+            yield Label("You selected Financing. Please enter your financing details.")
             with Vertical():
                 yield Label("Months to Pay:")
                 yield Input(placeholder="Enter the number of months...", id="months")
@@ -847,6 +775,7 @@ class PaymentScreen(Screen):
                 yield Button("Submit", id="submit", variant="primary")
                 yield Button("Clear", id="clear", variant="default")
         elif self.selected_payment == "Bank Transfer":
+            yield Label("You selected Bank Transfer. Please enter your bank details.")
             with Vertical():
                 yield Label("Bank Name:")
                 yield Input(placeholder="Enter your bank name...", id="bank_name")
@@ -855,6 +784,7 @@ class PaymentScreen(Screen):
                 yield Button("Submit", id="submit", variant="primary")
                 yield Button("Clear", id="clear", variant="default")
         elif self.selected_payment == "Check":
+            yield Label("You selected Check. Please enter your check details.")
             with Vertical():
                 yield Label("Check Number:")
                 yield Input(placeholder="Enter your check number...", id="check_number")
@@ -862,50 +792,25 @@ class PaymentScreen(Screen):
                 yield Input(placeholder="Enter your bank name...", id="bank_name_check")
                 yield Button("Submit", id="submit", variant="primary")
                 yield Button("Clear", id="clear", variant="default")
-        yield Static("", id="result")
-        yield Static("", id="financing_result")
+        yield Label("", id="result")
+        yield Label("", id="financing_result")
         yield Label("\nPress Escape to go back")
         yield Footer()
 
-    def _get_financing_months(self) -> int | None:
-        if self.selected_payment != "Financing":
-            return None
-        try:
-            val = self.query_one("#months", Input).value.strip()
-            return int(val) if val else None
-        except (ValueError, Exception):
-            return None
-
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        result = self.query_one("#result", Static)
-
+        result = self.query_one("#result", Label)
         if event.button.id == "submit":
-            try:
-                financing_months = self._get_financing_months()
-                create_transaction_from_offers(
-                    driver,
-                    success=True,
-                    offers=list(self.offers),
-                    car_id=self.car_data["car_id"],
-                    customer_id=self.app.customer_id,
-                    payment_type=self.selected_payment,
-                    financing_months=financing_months,
-                )
-                result.update("✓ Purchase complete! Transaction saved.")
-                dealership_id = self.car_data.get("dealership_id", 1)
-                self.app.push_screen(RateVisitScreen(dealership_id=dealership_id))
-            except Exception as e:
-                result.update(f"✗ Transaction failed: {e}")
-
+            result.update(f"✓ {self.selected_payment} details submitted successfully!")
+            time.sleep(2)
+            self.app.push_screen(RateVisitScreen(dealership_id=1))
         elif event.button.id == "clear":
             result.update("")
-
-        elif event.button.id == "checkmp":
-            months = self.query_one("#months", Input).value.strip()
-            if months and months.isdigit():
-                monthly = self.agreed_price / int(months)
-                self.query_one("#financing_result", Static).update(
-                    f"{months} months at ${monthly:,.2f} / month"
+        elif event.button.id == "checkmp" and self.selected_payment == "Financing":
+            months = self.query_one("#months", Input).value
+            if months:
+                financing_result = self.query_one("#financing_result", Label)
+                financing_result.update(
+                    f"Financing for {months} months at ${self.Aggreed_Price / int(months):.2f} per month"
                 )
 
     def on_key(self, event) -> None:
@@ -924,4 +829,5 @@ class MyApp(App):
         self.push_screen(LoginScreen())
 
 
-MyApp().run()
+if __name__ == "__main__":
+    MyApp().run()

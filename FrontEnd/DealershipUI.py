@@ -16,6 +16,20 @@ CarsExample = [
     {"make": "Mercedes-Benz", "model": "C-Class", "year": 2021},
 ]
 
+WarehousesExample = [
+    {"name": "Warehouse A", "location": "City X"},
+    {"name": "Warehouse B", "location": "City Y"},
+    {"name": "Warehouse C", "location": "City Z"},
+    {"name": "Warehouse D", "location": "City W"},
+]
+
+DealershipsExample = [
+    {"name": "Dealership 1", "location": "City A"},
+    {"name": "Dealership 2", "location": "City B"},
+    {"name": "Dealership 3", "location": "City C"},
+    {"name": "Dealership 4", "location": "City D"},
+]
+
 class MenuScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
@@ -34,14 +48,45 @@ class MenuScreen(Screen):
             self.app.exit()
         if label == "Inventory":
             self.app.push_screen(InventoryScreen())
-        if label == "Car Management":
+        if label == "Showroom Management":
             self.app.push_screen(CarManagementScreen())
         if label == "Discount Management":
             self.app.push_screen(DiscountManagementScreen())
+        if label == "Back Order":
+            self.app.push_screen(BackOrderScreen())
         if label == "Transaction Reports":
-            self.app.push_screen()
+            self.app.push_screen(TransactionReportsScreen())
         # else:
         #     self.app.push_screen(InfoScreen(f"You selected: {label}"))
+
+#     manufacturer_id: str,
+#     body_type: str,           # SUV | Sedan | Pickup
+#     fuel_type: str,           # Electric | Diesel | Gas
+#     model: str,
+#     brand: str,
+#     color: str,
+#     year: int,
+#     plate: str,
+#     group: str,
+#     special_order: bool,
+#     destination_country: str,
+class BackOrderScreen(Screen):
+    def compose(self) -> ComposeResult:
+        yield Label("Create Back Order")  
+        yield Header(show_clock=True)
+        with Vertical():
+            
+        
+
+
+
+        yield Label("\nPress Escape to go back")
+
+    
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.app.pop_screen()
+
 
 class InventoryScreen(Screen):
     def compose(self) -> ComposeResult:
@@ -71,6 +116,8 @@ class CarInfoScreen(Screen):
     def on_key(self, event) -> None:
         if event.key == "escape":
             self.app.pop_screen()
+
+# def ManageCarScreen(Screen):
 
 
 class CarManagementScreen(Screen):

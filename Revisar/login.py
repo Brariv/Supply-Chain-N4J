@@ -2,7 +2,7 @@ from neo4j import GraphDatabase
 from dotenv import load_dotenv
 import os
 
-load_dotenv()
+load_dotenv(override=True)
 
 URI = os.getenv("URI")
 USER = os.getenv("USER")

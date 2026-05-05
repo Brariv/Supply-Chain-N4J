@@ -2,7 +2,7 @@ from neo4j import GraphDatabase
 from dotenv import load_dotenv
 import os
 
-load_dotenv()
+load_dotenv(override=True)
 
 URI = os.getenv("URI")
 USER = os.getenv("USER")
@@ -170,6 +170,7 @@ def get_rated_visits(driver, customer_id: int):
     MATCH (c:Customer {customerId: $customer_id})-[r:VISITS]->(d:Dealership)
     WHERE r.rating IS NOT NULL
     RETURN 
+        d.dealershipId AS dealership_id,
         d.Name AS dealership,
         r.Date AS date,
         r.rating AS rating
@@ -310,3 +311,22 @@ def remove_all_cars_from_customer(driver, customer_id: int):
             "status": "success",
             "relationships_removed": removed
         }
+
+def create_visit(driver, customer_id: int, dealership_id: int):
+    query = """
+    MATCH (c:Customer {customerId: $customer_id}), (d:Dealership {dealershipId: $dealership_id})
+    CREATE (c)-[r:VISITS {Has_Reservation: false, Test_Drive: false, Date: date()}]->(d)
+    RETURN r
+    """
+
+    with driver.session(database=DATABASE) as session:
+        record = session.run(
+            query,
+            customer_id=customer_id,
+            dealership_id=dealership_id
+        ).single()
+
+        if not record:
+            raise ValueError("No se pudo crear la visita")
+
+        return record["r"]

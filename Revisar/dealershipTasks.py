@@ -5,7 +5,7 @@ import uuid
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 
-load_dotenv()
+load_dotenv(override=True)
 
 URI = os.getenv("URI")
 USER = os.getenv("USER")

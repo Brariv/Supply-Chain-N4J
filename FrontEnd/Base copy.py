@@ -1,18 +1,10 @@
-from pathlib import Path
-import sys
-
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, ListView, ListItem, Label
 from textual.screen import Screen
 from textual.widgets import Header, Footer, Input, Button, Label, Static
 from textual.containers import Vertical
 
-# Allow running this file directly with `python FrontEnd/Base.py`
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-
-from Revisar.login import login, dealership_login, driver
-from UserUI import MenuScreen as UserMenuScreen
-from DealershipUI import MenuScreen as DealerMenuScreen
+from Revisar.login import login, dealership_login
 
 
 class MenuScreen(Screen):
@@ -71,18 +63,13 @@ class UserLogin(Screen):
             self.app.pop_screen()
             
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        email = self.query_one("#name", Input).value
+        name = self.query_one("#name", Input).value
         password = self.query_one("#password", Input).value
         result = self.query_one("#result", Static)
 
         if event.button.id == "submit":
-            if email and password:
-                customer = login(driver, email, password)
-                if customer:
-                    self.app.customer_id = customer["customerId"]
-                    self.app.switch_screen(UserMenuScreen())
-                else:
-                    result.update("✗ Invalid email or password")
+            if name and password:
+                result.update(f"✓ Submitted: {name} <{password}>")
             else:
                 result.update("✗ Please fill in all fields")
         elif event.button.id == "clear":
@@ -122,12 +109,7 @@ class DealershipLogin(Screen):
 
         if event.button.id == "submit":
             if name and password:
-                dealership = dealership_login(driver, name, password)
-                if dealership:
-                    self.app.dealership_id = dealership["dealershipId"]
-                    self.app.switch_screen(DealerMenuScreen())
-                else:
-                    result.update("✗ Invalid name or password")
+                result.update(f"✓ Submitted: {name} <{password}>")
             else:
                 result.update("✗ Please fill in all fields")
         elif event.button.id == "clear":
@@ -136,12 +118,8 @@ class DealershipLogin(Screen):
             result.update("")
 
 class MyApp(App):
-    def __init__(self):
-        super().__init__()
-        self.customer_id: int = 0
-        self.dealership_id: int = 0
-
     def on_mount(self) -> None:
         self.push_screen(MenuScreen())
 
-MyApp().run()
+if __name__ == "__main__":
+    MyApp().run()
