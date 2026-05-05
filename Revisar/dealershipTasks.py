@@ -4,6 +4,7 @@ import os
 import uuid
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
+from faker import Faker
 
 load_dotenv(override=True)
 
@@ -11,6 +12,7 @@ URI = os.getenv("URI")
 USER = os.getenv("USER")
 PASSWORD = os.getenv("PASSWORD")
 DATABASE = os.getenv("DATABASE")
+faker = Faker()
 
 driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))  # type: ignore[arg-type]
 
@@ -44,31 +46,46 @@ driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))  # type: ignore[arg-ty
 
 VALID_BODY_TYPES = {"SUV", "Sedan", "Pickup"}
 VALID_FUEL_TYPES = {"Electric", "Diesel", "Gas"}
+brand_models = {
+    "Toyota":{"Corolla":"Sedan","Camry":"Sedan","RAV4":"SUV","Hilux":"Pickup"},
+    "Ford":{"F150":"Pickup","Mustang":"Sedan","Explorer":"SUV"},
+    "BMW":{"320i":"Sedan","X5":"SUV","M3":"Sedan"},
+    "Tesla":{"Model3":"Sedan","ModelX":"SUV","Cybertruck":"Pickup"},
+    "Hyundai":{"Elantra":"Sedan","Tucson":"SUV","SantaFe":"SUV"}
+}
 
+
+import uuid
 
 def create_backorder(
     driver,
     manufacturer_id: str,
-    body_type: str,           # SUV | Sedan | Pickup
     fuel_type: str,           # Electric | Diesel | Gas
     model: str,
     brand: str,
     color: str,
-    year: int,
-    plate: str,
-    group: str,
-    special_order: bool,
     destination_country: str,
 ):
     """
     Crea un nodo Car con labels dinámicos (Car + body_type + fuel_type)
     y lo vincula a un Manufacturer con la relación ON_BACKORDER.
+    - body_type se deriva de brand_models
+    - special_order siempre es True
     Requiere APOC instalado en la instancia de Neo4j.
     """
-    if body_type not in VALID_BODY_TYPES:
-        raise ValueError(f"body_type debe ser uno de {VALID_BODY_TYPES}")
+
+    # Validaciones básicas
     if fuel_type not in VALID_FUEL_TYPES:
         raise ValueError(f"fuel_type debe ser uno de {VALID_FUEL_TYPES}")
+
+    if brand not in brand_models:
+        raise ValueError(f"brand no válido. Opciones: {list(brand_models.keys())}")
+
+    if model not in brand_models[brand]:
+        raise ValueError(f"model no válido para {brand}. Opciones: {list(brand_models[brand].keys())}")
+
+    # Derivar body_type automáticamente
+    body_type = brand_models[brand][model]
 
     query = """
     MATCH (m:Manufacturer {id: $manufacturer_id})
@@ -78,32 +95,25 @@ def create_backorder(
             carId:  $car_id,
             Model:  $model,
             Brand:  $brand,
-            Color:  $color,
-            Year:   $year,
-            Plate:  $plate,
-            Group:  $group
+            Color:  $color
         }
     ) YIELD node AS c
     CREATE (m)-[:`ON_BACKORDER` {
         Date_start:          date(),
-        Special_order:       $special_order,
+        Special_order:       true,
         Destination_Country: $destination_country
     }]->(c)
     RETURN c
     """
 
     params = {
-        "manufacturer_id":    manufacturer_id,
-        "car_id":             str(uuid.uuid4()),
-        "body_type":          body_type,
-        "fuel_type":          fuel_type,
-        "model":              model,
-        "brand":              brand,
-        "color":              color,
-        "year":               year,
-        "plate":              plate,
-        "group":              group,
-        "special_order":      special_order,
+        "manufacturer_id":     manufacturer_id,
+        "car_id":              str(uuid.uuid4()),
+        "body_type":           body_type,
+        "fuel_type":           fuel_type,
+        "model":               model,
+        "brand":               brand,
+        "color":               color,
         "destination_country": destination_country,
     }
 
@@ -132,8 +142,8 @@ def create_backorder(
 def get_dealership_visits(
     driver,
     dealership_id: str,
-    date_from: date = None,   # si es None se usa hoy - 1 mes
-    date_to:   date = None,   # si es None se usa hoy
+    date_from: date = None,   # si es None se usa hoy - 1 mes #type: ignore[assignment]
+    date_to:   date = None,   # si es None se usa hoy #type: ignore[assignment]
 ):
     """
     Devuelve las visitas recibidas por el dealership en el rango [date_from, date_to].
