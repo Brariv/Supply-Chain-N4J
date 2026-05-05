@@ -11,7 +11,7 @@ from Revisar.dealershipTasks import (
     create_backorder, get_dealership_visits, get_showroom_avg_msrp,
     get_monthly_sales_report, set_discount_old_cars, adjust_showroom_msrp,
     adjust_showroom_msrp_by_brand, remove_discount_by_brand, set_tracking,
-    get_cars_on_shipment, get_all_backorders, delete_showroom_car,
+    get_cars_on_shipment, get_all_backorders, delete_showroom_car, toggle_test_drive
 )
 from Revisar.dealershipAux import get_all_manufacturers, driver
 from Revisar.buy_car import get_showroom_cars
@@ -79,7 +79,7 @@ class InventoryScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical():
-            yield Static("Loading stats…", id="stats")
+            # yield Static("Loading stats…", id="stats")
             yield Label("Showroom Cars", classes="section-label")
             yield ListView(id="car_list")
             # yield Label("Adjust MSRP (enter % then press button)", classes="section-label")
@@ -94,16 +94,16 @@ class InventoryScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        did = str(self.app.dealership_id)
-        try:
-            stats = get_showroom_avg_msrp(driver, did)
-            self.query_one("#stats", Static).update(
-                f"Total: {stats['total_cars']} cars  |  "
-                f"Avg MSRP: ${stats['avg_msrp'] or 0:,.0f}  |  "
-                f"Min: ${stats['min_msrp'] or 0:,.0f}  |  Max: ${stats['max_msrp'] or 0:,.0f}"
-            )
-        except Exception as e:
-            self.query_one("#stats", Static).update(f"Stats unavailable: {e}")
+        did = self.app.dealership_id
+        # try:
+        #     stats = get_showroom_avg_msrp(driver, did)
+        #     self.query_one("#stats", Static).update(
+        #         f"Total: {stats['total_cars']} cars  |  "
+        #         f"Avg MSRP: ${stats['avg_msrp'] or 0:,.0f}  |  "
+        #         f"Min: ${stats['min_msrp'] or 0:,.0f}  |  Max: ${stats['max_msrp'] or 0:,.0f}"
+        #     )
+        # except Exception as e:
+        #     self.query_one("#stats", Static).update(f"Stats unavailable: {e}")
 
         lv = self.query_one("#car_list", ListView)
         try:
@@ -130,7 +130,7 @@ class InventoryScreen(Screen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id or ""
         result = self.query_one("#result", Static)
-        did = str(self.app.dealership_id)
+        did = self.app.dealership_id
         pct_str = self.query_one("#adj_pct", Input).value.strip()
         try:
             pct = float(pct_str) / 100 if pct_str else None
@@ -196,7 +196,7 @@ class CarManagementScreen(Screen):
         if event.button.id == "delete":
             result = self.query_one("#result", Static)
             try:
-                delete_showroom_car(driver, str(self.app.dealership_id), str(self.car["car_id"]))
+                delete_showroom_car(driver, self.app.dealership_id, str(self.car["car_id"]))
                 result.update("✓ Car deleted from showroom")
                 event.button.disabled = True
             except Exception as e:
@@ -231,7 +231,7 @@ class TrackShipmentsScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        did = str(self.app.dealership_id)
+        did = self.app.dealership_id
         lv = self.query_one("#ship_list", ListView)
         try:
             self.shipments_data = get_cars_on_shipment(driver, did)
@@ -249,7 +249,7 @@ class TrackShipmentsScreen(Screen):
         if event.button.id == "mark_pending":
             result = self.query_one("#result", Static)
             try:
-                res = set_tracking(driver, str(self.app.dealership_id), "PENDING")
+                res = set_tracking(driver, self.app.dealership_id, "PENDING")
                 result.update(f"✓ Marked {res['updated_shipments']} shipments as PENDING")
             except Exception as e:
                 result.update(f"✗ Error: {e}")
@@ -307,7 +307,7 @@ class SetOldCarsDiscountScreen(Screen):
                 result.update("✗ Invalid percentage")
                 return
             try:
-                res = set_discount_old_cars(driver, str(self.app.dealership_id), pct)
+                res = set_discount_old_cars(driver, self.app.dealership_id, pct)
                 result.update(f"✓ Discount applied to {res['updated_cars']} cars")
             except Exception as e:
                 result.update(f"✗ Error: {e}")
@@ -355,7 +355,7 @@ class RemoveDiscountScreen(Screen):
                 result.update("✗ Select a brand first")
                 return
             try:
-                res = remove_discount_by_brand(driver, str(self.app.dealership_id), self.sel_brand)
+                res = remove_discount_by_brand(driver, self.app.dealership_id, self.sel_brand)
                 result.update(f"✓ Removed discount from {res['updated_cars']} {self.sel_brand} cars")
             except Exception as e:
                 result.update(f"✗ Error: {e}")
@@ -548,7 +548,7 @@ class ViewBackordersScreen(Screen):
 
     def on_mount(self) -> None:
         try:
-            orders = get_all_backorders(driver, str(self.app.dealership_id))
+            orders = get_all_backorders(driver, self.app.dealership_id)
             if not orders:
                 self.query_one("#content", Static).update("No backorders found.")
                 return
@@ -627,7 +627,7 @@ class SalesReportScreen(Screen):
             status.update("✗ Enter a valid month (1-12)")
             return
         try:
-            self.results = get_monthly_sales_report(driver, str(self.app.dealership_id), month)
+            self.results = get_monthly_sales_report(driver, self.app.dealership_id, month)
             lv = self.query_one("#sales_list", ListView)
             for item in list(lv.query(ListItem)):
                 item.remove()
@@ -665,10 +665,30 @@ class VisitsReportScreen(Screen):
         yield Label("Press Escape to go back")
         yield Footer()
 
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        idx = event.list_view.index
+        if not (0 <= idx < len(self.visits_data)):
+            return
+        visit = self.visits_data[idx]
+        try:
+            res = toggle_test_drive(
+                driver,
+                str(self.app.dealership_id),
+                str(visit["customer_id"]),
+                str(visit["visit_date"])[:10],
+            )
+            visit["test_drive"] = res["new_test_drive_value"]
+            td = "✓ Test Drive" if visit["test_drive"] else "✗ Test Drive"
+            event.item.query_one(Label).update(
+                f"{visit.get('customer_name','')}  |  {visit.get('visit_date','')}  |  {td}"
+            )
+        except Exception as e:
+            self.query_one("#status", Static).update(f"Error: {e}")
+
     def on_mount(self) -> None:
         lv = self.query_one("#visit_list", ListView)
         try:
-            self.visits_data = get_dealership_visits(driver, str(self.app.dealership_id))
+            self.visits_data = get_dealership_visits(driver, self.app.dealership_id)
             for v in self.visits_data:
                 td = "✓ Test Drive" if v.get("test_drive") else "✗ Test Drive"
                 lv.mount(ListItem(Label(
@@ -694,7 +714,7 @@ class AveragePriceReportScreen(Screen):
 
     def on_mount(self) -> None:
         try:
-            stats = get_showroom_avg_msrp(driver, str(self.app.dealership_id))
+            stats = get_showroom_avg_msrp(driver, self.app.dealership_id)
             self.query_one("#content", Static).update(
                 f"Showroom MSRP Statistics\n\n"
                 f"  Total Cars:  {stats['total_cars']}\n"

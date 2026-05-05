@@ -1,6 +1,8 @@
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
 import os
+import csv
+from uuid import uuid4
 
 load_dotenv(override=True)
 
@@ -22,7 +24,9 @@ def get_customer_cars(driver, customer_id: int):
         car.Brand AS brand,
         car.Year AS year,
         car.Plate AS plate,
-        r.Since AS since
+        r.Since AS since,
+        r.Milage AS milage,
+        r.Has_Crashed AS has_crashed
     """
 
     with driver.session(database=DATABASE) as session:
@@ -330,3 +334,50 @@ def create_visit(driver, customer_id: int, dealership_id: int):
             raise ValueError("No se pudo crear la visita")
 
         return record["r"]
+    
+def add_costumer_cars_csv(driver, customer_id: int, csv_path: str):
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        rows = [
+            {
+                "Model":       row["Model"],
+                "Brand":       row["Brand"],
+                "Year":        int(row["Year"]),
+                "Plate":       row["Plate"],
+                "Since":       row["Since"],
+                "Milage":      row["Milage"],
+                "Has_Crashed": row["Has_Crashed"],
+            }
+            for row in csv.DictReader(f)
+        ]
+
+    if not rows:
+        return {"status": "success", "cars_added": 0}
+
+    query = """
+    MATCH (c:Customer {customerId: $customer_id})
+    UNWIND $rows AS row
+    CREATE (car:Car {
+        carId: $carId,
+        Model: row.Model,
+        Brand: row.Brand,
+        Year:  row.Year,
+        Plate: row.Plate
+    })
+    CREATE (c)-[:OWNS {
+        Since:       row.Since,
+        Milage:      row.Milage,
+        Has_Crashed: row.Has_Crashed
+    }]->(car)
+    RETURN count(car) AS cars_added
+    """
+
+    with driver.session(database=DATABASE) as session:
+        record = session.run(query, customer_id=customer_id, rows=rows, carId=uuid4().int).single()
+
+        if not record:
+            raise ValueError("No se pudieron agregar los carros")
+
+        return {
+            "status": "success",
+            "cars_added": record["cars_added"]
+        }

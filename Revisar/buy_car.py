@@ -194,6 +194,10 @@ def create_transaction_from_offers(
         Discount: $discount
     }]->(car)
 
+    CREATE (t)-[:AT {
+        Date: date()
+    }]->(d)
+
     FOREACH (_ IN CASE WHEN r IS NOT NULL THEN [1] ELSE [] END | DELETE r)
 
     CREATE (cst)-[:OWNS {

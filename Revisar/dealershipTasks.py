@@ -89,19 +89,20 @@ def create_backorder(
 
     query = """
     MATCH (m:Manufacturer {manufacturerId: $manufacturer_id})
+    OPTIONAL MATCH (c_existing:Car)
     WITH m,
-        ['Car', $body_type, $fuel_type] AS labels,
-        {
-            carId:  $car_id,
-            Model:  $model,
-            Brand:  $brand,
-            Color:  $color,
-            Plate:  $plate,
-            Year:   $year,
-            Group:  $group
-        } AS props      
+        coalesce(max(c_existing.carId), 0) + 1 AS next_id,
+        ['Car', $body_type, $fuel_type] AS labels
     CREATE (c:$(labels))
-    SET c = props
+    SET c = {
+        carId: next_id,
+        Model: $model,
+        Brand: $brand,
+        Color: $color,
+        Plate: $plate,
+        Year:  $year,
+        Group: $group
+    }
     CREATE (m)-[:ON_BACKORDER {
         Date_start:          date(),
         Special_order:       true,
@@ -198,24 +199,23 @@ def get_showroom_avg_msrp(driver, dealership_id: int):
 
     with driver.session(database=DATABASE) as session:
         rec = session.run(query, dealership_id=dealership_id).single()
-        if rec["total_cars"] == 0:
-            raise ValueError("Sin carros en showroom")
+        
         return rec.data()
 
 def get_monthly_sales_report(driver, dealership_id: int, month: int):
     """
-    Retorna un reporte de ventas mensuales para el dealership activo, incluyendo
-    detalles de cada venta (carro, cliente, fecha, monto).
+    Retorna un reporte de ventas mensuales para el dealership activo usando la
+    relación AT entre Transaction y Dealership.
     """
     query = """
-    MATCH (d:Dealership {dealershipId: $dealership_id})<-[s:Sells]-(cst:Customer)-[:Visits]->(d)
+    MATCH (t:Transaction)-[s:AT]->(d:Dealership {dealershipId: $dealership_id})
     WHERE s.Date.month = $month
     RETURN
-        cst.id AS customer_id,
-        cst.Name AS customer_name,
+        coalesce(t.customerId, t.CustomerId, t.id) AS customer_id,
+        coalesce(t.customerName, t.CustomerName, t.Name, t.name) AS customer_name,
         s.Date AS sale_date,
-        s.Amount AS sale_amount,
-        s.CarId AS car_id
+        coalesce(t.Amount, t.amount) AS sale_amount,
+        coalesce(t.CarId, t.carId) AS car_id
     ORDER BY s.Date DESC
     """
 
@@ -337,7 +337,7 @@ def adjust_showroom_msrp_by_brand(
 
 def remove_discount_by_brand(
     driver,
-    dealership_id: str,
+    dealership_id: int,
     brand: str,
 ):
     """
@@ -372,8 +372,8 @@ def remove_discount_by_brand(
 
 def toggle_test_drive(
     driver,
-    dealership_id: str,
-    customer_id:   str,
+    dealership_id: int,
+    customer_id:   int,
     visit_date:    str,   # formato "YYYY-MM-DD"
 ):
     """
@@ -382,7 +382,7 @@ def toggle_test_drive(
     """
     query = """
     MATCH (d:Dealership {dealershipId: $dealership_id})<-[v:Visits]-(cst:Customer {id: $customer_id})
-    WHERE v.Date = date($visit_date)
+    WHERE date(v.Date) = date($visit_date)
     SET v.Test_Drive = NOT v.Test_Drive
     RETURN v.Test_Drive AS new_value
     """
@@ -409,7 +409,7 @@ def toggle_test_drive(
 # SET s.Tracking = 'PENDING'
 # RETURN count(s) AS updated_shipments
 
-def set_tracking(driver, dealership_id: str, status: str):
+def set_tracking(driver, dealership_id: int, status: str):
     """
     Busca todas las relaciones Ships hacia el dealership activo que tengan
     Tracking: NULL y les asigna el valor 'PENDING'.
@@ -425,7 +425,7 @@ def set_tracking(driver, dealership_id: str, status: str):
         rec = session.run(query, dealership_id=dealership_id, status=status).single()
         return {"updated_shipments": rec["updated_shipments"]}
 
-def get_shipments_with_tracking(driver, dealership_id: str):
+def get_shipments_with_tracking(driver, dealership_id: int):
     """
     Retorna una lista de los carros que están siendo enviados al dealership activo
     junto con su estado de Tracking.
@@ -439,7 +439,7 @@ def get_shipments_with_tracking(driver, dealership_id: str):
         result = session.run(query, dealership_id=dealership_id)
         return [record.data() for record in result]
     
-def get_all_backorders(driver, dealership_id: str):
+def get_all_backorders(driver, dealership_id: int):
     """
     Retorna una lista de los carros que están en backorder para el dealership activo,
     incluyendo detalles del pedido.
@@ -454,7 +454,7 @@ def get_all_backorders(driver, dealership_id: str):
         result = session.run(query, dealership_id=dealership_id)
         return [record.data() for record in result]
     
-def get_cars_on_shipment(driver, dealership_id: str):
+def get_cars_on_shipment(driver, dealership_id: int):
     """
     Retorna una lista de los carros que están siendo enviados al dealership activo,
     incluyendo detalles del carro y estado de envío.
@@ -479,8 +479,8 @@ def get_cars_on_shipment(driver, dealership_id: str):
 
 def delete_showroom_car(
     driver,
-    dealership_id: str,
-    car_id:        str,
+    dealership_id: int,
+    car_id:        int,
 ):
     """
     Elimina un nodo Car que esté en el showroom del dealership activo,
