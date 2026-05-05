@@ -64,7 +64,7 @@ class MenuScreen(Screen):
             ListItem(Label("Show My Cars")),
             ListItem(Label("Account")),
             ListItem(Label("Visit History")),
-            ListItem(Label("Custom Car Status")),
+            ListItem(Label("Add Cars With CSV")),
             ListItem(Label("Quit")),
         )
         yield Footer()
@@ -81,8 +81,8 @@ class MenuScreen(Screen):
             self.app.push_screen(AccountManagmentScreen())
         elif label == "Visit History":
             self.app.push_screen(VisitHistoryScreen())
-        elif label == "Custom Car Status":
-            self.app.push_screen(CustomCarStatusScreen())
+        elif label == "Add Cars With CSV":
+            self.app.push_screen(AddCarsWithCSVScreen())
 
 
 # ---------------------------------------------------------------------------
@@ -472,39 +472,13 @@ class PastRatingScreen(Screen):
             self.app.pop_screen()
 
 
-# ---------------------------------------------------------------------------
-# Custom Car Status  →  get_customer_cars
-# ---------------------------------------------------------------------------
-
-class CustomCarStatusScreen(Screen):
-    def __init__(self):
-        super().__init__()
-        self.cars_data = []
-
+class AddCarsWithCSVScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Label("Custom Car Status")
-        yield ListView(id="cars_list")
-        yield Static("", id="status")
+        yield Label("Add Cars With CSV")
+        yield Label("This feature is not implemented yet.")
         yield Label("\nPress Escape to go back")
         yield Footer()
-
-    def on_mount(self) -> None:
-        try:
-            self.cars_data = get_customer_cars(driver, self.app.customer_id)
-            lv = self.query_one("#cars_list", ListView)
-            if self.cars_data:
-                for car in self.cars_data:
-                    label = (
-                        f"{car.get('year', '?')} {car.get('brand', '?')} {car.get('model', '?')}"
-                        f" | Plate: {car.get('plate', 'N/A')}"
-                        f" | Since: {car.get('since', 'N/A')}"
-                    )
-                    lv.mount(ListItem(Label(label)))
-            else:
-                self.query_one("#status", Static).update("No cars found.")
-        except Exception as e:
-            self.query_one("#status", Static).update(f"Error: {e}")
 
     def on_key(self, event) -> None:
         if event.key == "escape":
@@ -920,8 +894,9 @@ class MyApp(App):
         super().__init__()
         self.customer_id: int = 0
 
-    def on_mount(self) -> None:
-        self.push_screen(LoginScreen())
+    # def on_mount(self) -> None:
+    #     if not self.customer_id:
+    #         self.push_screen(LoginScreen())
 
 
-MyApp().run()
+# MyApp().run()

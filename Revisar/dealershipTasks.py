@@ -210,6 +210,26 @@ def get_showroom_avg_msrp(driver, dealership_id: str):
             raise ValueError("Dealership no encontrado o sin carros en showroom")
         return rec.data()
 
+def get_monthly_sales_report(driver, dealership_id: str, month: int):
+    """
+    Retorna un reporte de ventas mensuales para el dealership activo, incluyendo
+    detalles de cada venta (carro, cliente, fecha, monto).
+    """
+    query = """
+    MATCH (d:Dealership {dealershipId: $dealership_id})<-[s:Sells]-(cst:Customer)-[:Visits]->(d)
+    WHERE s.Date.month = $month
+    RETURN
+        cst.id AS customer_id,
+        cst.Name AS customer_name,
+        s.Date AS sale_date,
+        s.Amount AS sale_amount,
+        s.CarId AS car_id
+    ORDER BY s.Date DESC
+    """
+
+    with driver.session(database=DATABASE) as session:
+        result = session.run(query, dealership_id=dealership_id, month=month)
+        return [record.data() for record in result]
 
 # TASK 7 — Definir descuento a carros de años anteriores vinculados a un dealership
 # CYPHER (para probar en Neo4j Browser):
@@ -287,7 +307,33 @@ def adjust_showroom_msrp(
         rec = session.run(query, params).single()
         return {"updated_cars": rec["updated_cars"]}
 
+def adjust_showroom_msrp_by_brand(
+    driver,
+    dealership_id: str,
+    brand: str,
+    adjustment_pct: float,   # ej: 0.05 → +5 %, -0.05 → -5 %
+):
+    """
+    Aplica un ajuste porcentual al MSRP de la relación ON_SHOWROOM de los carros
+    de una marca específica en el showroom del dealership activo.
+    """
+    query = """
+    MATCH (d:Dealership {dealershipId: $dealership_id})-[r:`ON_SHOWROOM`]->(c:Car)
+    WHERE c.Brand = $brand
+    SET r.MSRP = round(r.MSRP * (1 + $adjustment_pct), 2)
+    RETURN count(c) AS updated_cars
+    """
 
+    params = {
+        "dealership_id":  dealership_id,
+        "brand":          brand,
+        "adjustment_pct": adjustment_pct,
+    }
+
+    with driver.session(database=DATABASE) as session:
+        rec = session.run(query, params).single()
+        return {"updated_cars": rec["updated_cars"]}
+    
 # TASK 11 — Eliminar propiedad Discount de carros en showroom por marca
 # CYPHER (para probar en Neo4j Browser):
 #   Reemplaza $dealership_id y $brand con valores reales.
@@ -371,7 +417,7 @@ def toggle_test_drive(
 # SET s.Tracking = 'PENDING'
 # RETURN count(s) AS updated_shipments
 
-def set_pending_tracking(driver, dealership_id: str):
+def set_tracking(driver, dealership_id: str, status: str):
     """
     Busca todas las relaciones Ships hacia el dealership activo que tengan
     Tracking: NULL y les asigna el valor 'PENDING'.
@@ -379,15 +425,57 @@ def set_pending_tracking(driver, dealership_id: str):
     query = """
     MATCH (d:Dealership {dealershipId: $dealership_id})-[s:Ships]->(c:Car)
     WHERE s.Tracking IS NULL
-    SET s.Tracking = 'PENDING'
+    SET s.Tracking = $status
     RETURN count(s) AS updated_shipments
     """
 
     with driver.session(database=DATABASE) as session:
-        rec = session.run(query, dealership_id=dealership_id).single()
+        rec = session.run(query, dealership_id=dealership_id, status=status).single()
         return {"updated_shipments": rec["updated_shipments"]}
 
+def get_shipments_with_tracking(driver, dealership_id: str):
+    """
+    Retorna una lista de los carros que están siendo enviados al dealership activo
+    junto con su estado de Tracking.
+    """
+    query = """
+    MATCH (d:Dealership {dealershipId: $dealership_id})-[s:Ships]->(c:Car)
+    RETURN c.carId AS car_id, s.Tracking AS tracking_status
+    """
 
+    with driver.session(database=DATABASE) as session:
+        result = session.run(query, dealership_id=dealership_id)
+        return [record.data() for record in result]
+    
+def get_all_backorders(driver, dealership_id: str):
+    """
+    Retorna una lista de los carros que están en backorder para el dealership activo,
+    incluyendo detalles del pedido.
+    """
+    query = """
+    MATCH (d:Dealership {dealershipId: $dealership_id})<-[:`ON_BACKORDER`]-(c:Car)
+    RETURN c.carId AS car_id, c.Model AS model, c.Brand AS brand, c.Color AS color,
+           c.Year AS year, c.Plate AS plate, c.Group AS group
+    """
+
+    with driver.session(database=DATABASE) as session:
+        result = session.run(query, dealership_id=dealership_id)
+        return [record.data() for record in result]
+    
+def get_cars_on_shipment(driver, dealership_id: str):
+    """
+    Retorna una lista de los carros que están siendo enviados al dealership activo,
+    incluyendo detalles del carro y estado de envío.
+    """
+    query = """
+    MATCH (d:Dealership {dealershipId: $dealership_id})-[s:Ships]->(c:Car)
+    RETURN c.carId AS car_id, c.Model AS model, c.Brand AS brand, c.Color AS color,
+           c.Year AS year, c.Plate AS plate, c.Group AS group, s.Tracking AS tracking_status
+    """
+
+    with driver.session(database=DATABASE) as session:
+        result = session.run(query, dealership_id=dealership_id)
+        return [record.data() for record in result]
 # TASK 18 — Eliminar un carro del showroom junto con todas sus relaciones
 # CYPHER (para probar en Neo4j Browser):
 #   Reemplaza $dealership_id y $car_id con valores reales.
